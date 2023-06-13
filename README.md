@@ -6,7 +6,7 @@ FILASSe also known as Filasse Isn't Like Another Scheduler System.
 FILASSe is a thread Scheduler written in Rust. 
 
 His automaton scheme is :  
-<img src="scheme.png" alt="Scheme" width="50%">
+<img src="scheme.png" alt="Scheme">
 
 
 ## Documentation
