@@ -1,2 +1,2 @@
-pub mod node;
+pub mod job;
 pub mod scheduler;
