@@ -35,9 +35,17 @@ mod tests {
     fn add_to_queue() {
         let mut sched = Scheduler::default();
         sched.add_to_scheduler(&mut Job::default());
-        sched.add_to_scheduler(&mut Job::default());
-        sched.add_to_queue();
-        assert!(sched.queue().clone() == vec![1, 2] || sched.queue().clone() == vec![2, 1])
+        assert!(
+            sched.queue().get(0).unwrap()
+                == &Job {
+                    pid: 0,
+                    parent: 0,
+                    state: Ready {
+                        duration: 0,
+                        priority: 0
+                    }
+                }
+        );
     }
 
     #[test]
@@ -45,26 +53,34 @@ mod tests {
         let mut sched = Scheduler::default();
         sched.add_to_scheduler(&mut Job::default());
         assert!(sched.pid_count() == 2);
-        assert!(sched.processus().get(&1).unwrap().state() == State::Ready);
+        assert!(
+            sched.queue().get(0).unwrap().state
+                == Ready {
+                    duration: 0,
+                    priority: 0
+                }
+        );
     }
 
     #[test]
     fn is_scheduled() {
         let mut sched = Scheduler::default();
         sched.add_to_scheduler(&mut Job::default());
-        assert!(sched.queue().is_empty());
-        sched.add_to_queue();
         assert!(sched.queue().len() == 1);
     }
 
     #[test]
     fn process() {
         let mut sched = Scheduler::new(1);
-        sched.add_to_scheduler(&mut Job::new(1, 2));
-        sched.add_to_queue();
-        sched.process(1);
-        assert!(sched.processus_mut().get_mut(&1).unwrap().state() == State::Ready);
-        sched.process(1);
-        assert!(sched.processus_mut().get_mut(&1).unwrap().state() == State::Zombie);
+        sched.add_to_scheduler(&mut Job::new(1, 2, 1, 0));
+        assert!(
+            sched.queue().get(0).unwrap().state
+                == Ready {
+                    duration: 1,
+                    priority: 0
+                }
+        );
+        sched.process();
+        assert!(sched.zombie().get(0).unwrap().state == Zombie {});
     }
 }
