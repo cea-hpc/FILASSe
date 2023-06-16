@@ -7,8 +7,9 @@ use std::collections::HashMap;
 ///# use filasse::job::*;
 ///# use std::collections::HashMap;
 /// pub struct Scheduler {
-///     processus: HashMap<u64, Job>,
-///     queue: Vec<u64>,
+///    queue: Vec<Job<Ready>>,
+///    blocked: Vec<Job<Blocked>>,
+///    zombie: Vec<Job<Zombie>>,
 ///     q: u64,
 ///     pid_count: u64,
 ///     available: bool,
@@ -17,8 +18,10 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct Scheduler {
-    processus: HashMap<u64, Job>,
-    queue: Vec<u64>,
+    // processus: HashMap<u64, Job<Ready>>,
+    queue: Vec<Job<Ready>>,
+    blocked: Vec<Job<Blocked>>,
+    zombie: Vec<Job<Zombie>>,
     q: u64,
     pid_count: u64,
     available: bool,
@@ -27,8 +30,9 @@ pub struct Scheduler {
 impl Default for Scheduler {
     fn default() -> Self {
         Scheduler {
-            processus: HashMap::<u64, Job>::new(),
-            queue: Vec::<u64>::new(),
+            queue: Vec::<Job<Ready>>::new(),
+            blocked: Vec::<Job<Blocked>>::new(),
+            zombie: Vec::<Job<Zombie>>::new(),
             q: 100,
             pid_count: 1,
             available: true,
@@ -54,8 +58,9 @@ impl Scheduler {
     ///````
     pub fn new(q: u64) -> Self {
         Scheduler {
-            processus: HashMap::<u64, Job>::new(),
-            queue: Vec::<u64>::new(),
+            queue: Vec::<Job<Ready>>::new(),
+            blocked: Vec::<Job<Blocked>>::new(),
+            zombie: Vec::<Job<Zombie>>::new(),
             q,
             pid_count: 1,
             available: true,
@@ -118,34 +123,6 @@ impl Scheduler {
         self.pid_count
     }
 
-    /// Getter processus
-    ///
-    /// The method allows you to get the processus HashMap
-    ///
-    /// # Example :
-    /// ```
-    ///# use filasse::scheduler::*;
-    /// let sched = Scheduler::default();
-    /// sched.processus();
-    ///```
-    pub fn processus(&self) -> &HashMap<u64, Job> {
-        &self.processus
-    }
-
-    /// Getter mutable processus
-    ///
-    /// The method allows you to get the mutable processus HashMap
-    ///
-    /// # Example :
-    /// ```
-    ///# use filasse::scheduler::*;
-    /// let mut sched = Scheduler::default();
-    /// sched.processus_mut();
-    ///```
-    pub fn processus_mut(&mut self) -> &mut HashMap<u64, Job> {
-        &mut self.processus
-    }
-
     /// Getter Queue
     ///
     /// The method allows you to get the queue vector.
@@ -156,8 +133,22 @@ impl Scheduler {
     /// let sched = Scheduler::default();
     /// sched.queue();
     ///```
-    pub fn queue(&self) -> &Vec<u64> {
+    pub fn queue(&self) -> &Vec<Job<Ready>> {
         &self.queue
+    }
+
+    /// Getter Zombie
+    ///
+    /// The method allows you to get the zombie vector.
+    ///
+    /// # Example :
+    /// ```
+    ///# use filasse::scheduler::*;
+    /// let sched = Scheduler::default();
+    /// sched.zombie();
+    ///```
+    pub fn zombie(&self) -> &Vec<Job<Zombie>> {
+        &self.zombie
     }
 
     /// Add to the scheduler
@@ -172,36 +163,10 @@ impl Scheduler {
     /// let mut job = Job::default();
     /// sched.add_to_scheduler(&mut job);
     ///```
-    pub fn add_to_scheduler(&mut self, job: &mut Job) {
-        match job.state() {
-            State::New => {
-                job.ready();
-                self.processus.insert(self.pid_count, *job);
-                self.pid_count += 1;
-            }
-            _ => (),
-        };
-    }
-
-    /// Add to the queue
-    ///
-    /// The method adds all the processus no already added to the queue if they are in the `State::Ready`
-    ///
-    /// # Example :
-    /// ```
-    ///# use filasse::scheduler::*;
-    /// let mut sched = Scheduler::default();
-    /// sched.add_to_queue();
-    ///```
-    pub fn add_to_queue(&mut self) {
-        for job in &self.processus {
-            if !self.queue.contains(job.0) {
-                match job.1.state() {
-                    State::Ready => self.queue.push(*job.0),
-                    _ => (),
-                }
-            }
-        }
+    pub fn add_to_scheduler(&mut self, job: &mut Job<New>) {
+        let joba: Job<Ready> = Job::from(*job);
+        self.queue.push(joba);
+        self.pid_count += 1;
     }
 
     /// Process
@@ -212,24 +177,25 @@ impl Scheduler {
     /// ```
     ///# use filasse::scheduler::*;
     ///# use filasse::job::*;
-    /// let mut sched = Scheduler::default();
-    /// let mut job = Job::default();
+    /// let mut sched = Scheduler::new(1);
+    ///    let mut job = Job::new(1, 2, 2, 2);
     /// sched.add_to_scheduler(&mut job);
-    /// sched.add_to_queue();
-    /// sched.process(1);
+    /// sched.process();
     ///```
-    pub fn process(&mut self, job_pid: u64) {
-        let job = self.processus.get_mut(&job_pid).unwrap();
-        job.run();
-        self.queue.remove(0);
-        if job.duration() > 0 {
-            if (job.duration() - self.q) > 0 {
-                job.set_duration(job.duration() - self.q);
-                self.queue.push(job_pid);
-                job.ready();
+    pub fn process(&mut self) {
+        let job = self.queue.get_mut(0).unwrap();
+        let mut job: Job<Running> = Job::from(*job);
+        if job.state.duration > 0 {
+            if (job.state.duration - self.q) > 0 {
+                job.state.duration -= self.q;
+                let job = Job::from(job);
+                self.queue.push(job);
+                self.queue.remove(0);
             } else {
-                job.set_duration(0);
-                job.zombie();
+                job.state.duration = 0;
+                let job = Job::from(job);
+                self.zombie.push(job);
+                self.queue.remove(0);
             }
         }
     }
@@ -242,31 +208,23 @@ impl Scheduler {
     /// ```
     ///# use filasse::scheduler::*;
     ///# use filasse::job::*;
-    /// let mut sched = Scheduler::default();
-    /// let mut job = Job::default();
+    /// let mut sched = Scheduler::new(1);
+    /// let mut job = Job::new(1, 2, 2, 2);
     /// sched.add_to_scheduler(&mut job);
+    /// sched.process();
     /// sched.round_robin();
     ///```
     pub fn round_robin(&mut self) {
         loop {
             if !self.queue.is_empty() {
-                match self.processus.get(&self.queue[0]) {
-                    Some(job) => {
-                        match job.state() {
-                            State::Ready => {
-                                println!("SUR LE PROCESSUS : {}", self.queue[0]);
-                                self.process(self.queue[0]); // pendant Q temps
-                            }
-                            _ => (),
-                        }
+                match self.queue.get(0) {
+                    Some(_) => {
+                        println!("SUR LE PROCESSUS : {:?}", self.queue[0]);
+                        self.process(); // pendant Q temps
                     }
                     None => break,
                 }
-                println!(
-                    "Queue : {:?}\nProcessus : {:?}\n",
-                    self.queue(),
-                    self.processus()
-                );
+                println!("Queue : {:?}\nZombie : {:?}\n", self.queue(), self.zombie);
             } else {
                 println!("No Processus");
                 break;
