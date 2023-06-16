@@ -1,253 +1,129 @@
-// Todo:
-// Use Result to manage error
+pub trait State {}
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub enum State {
-    New,
-    Ready,
-    Running,
-    Blocked,
-    Zombie,
-    Terminated,
+pub struct New {
+    pub duration: u64,
+    pub priority: u32,
+}
+impl State for New {}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Ready {
+    pub duration: u64,
+    pub priority: u32,
+}
+impl State for Ready {}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Running {
+    pub duration: u64,
+    pub priority: u32,
+}
+impl State for Running {}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Blocked {
+    pub duration: u64,
+    pub priority: u32,
+}
+impl State for Blocked {}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Zombie {}
+impl State for Zombie {}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Terminated {}
+impl State for Terminated {}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Job<Status: State> {
+    pub pid: u32,
+    pub parent: u32,
+    pub state: Status,
 }
 
-/// Struct of the job
-///
-/// ```
-/// # use filasse::job::*;
-/// struct job {
-///     state: State,
-///     priority: u32,
-///     duration: u64,
-/// }
-#[derive(Debug, Copy, Clone)]
-pub struct Job {
-    state: State,
-    priority: u32,
-    duration: u64,
-}
-
-impl Default for Job {
-    fn default() -> Self {
+impl From<Job<Zombie>> for Job<Terminated> {
+    fn from(prev: Job<Zombie>) -> Job<Terminated> {
         Job {
-            state: State::New,
-            priority: 0,
-            duration: 0,
+            pid: prev.pid,
+            parent: prev.parent,
+            state: Terminated {},
         }
     }
 }
 
-impl Job {
-    /// Creates a new Job
-    ///
-    /// Takes two arguments which are the priority and the duration. The methode will give you back a job with a `State::New` and the values given. It alse exist the default method to create the job. With it, no argument are require and the value of priority and duration will be set to Zero.
-    /// # Examples
-    /// Example 1 :
-    ///```
-    /// # use filasse::job::*;
-    /// let job = Job::new(1,2);
-    ///```
-    /// Example 2 :
-    ///
-    ///```
-    /// # use filasse::job::*;
-    /// let job = Job::default();
-    ///```
-    pub fn new(priority: u32, duration: u64) -> Self {
+impl From<Job<Running>> for Job<Zombie> {
+    fn from(prev: Job<Running>) -> Job<Zombie> {
         Job {
-            state: State::New,
-            priority,
-            duration,
+            pid: prev.pid,
+            parent: prev.parent,
+            state: Zombie {},
         }
     }
+}
 
-    /// Get state value
-    ///
-    /// This method is used to get the value of the job's state
-    ///
-    /// # Example :
-    /// ```
-    /// # use filasse::job::*;
-    /// let job = Job::default();
-    /// let status = job.state();
-    /// ```
-    pub fn state(&self) -> State {
-        self.state
-    }
-
-    /// Get priority value
-    ///
-    /// This method is used to get the value of the job's priority
-    ///
-    /// # Example :
-    /// ```
-    /// # use filasse::job::*;
-    /// let job = Job::default();
-    /// let status = job.priority();
-    /// ```
-    pub fn priority(&self) -> u32 {
-        self.priority
-    }
-
-    /// Get duration value
-    ///
-    /// This method is used to get the value of the job's duration
-    ///
-    /// # Example :
-    /// ```
-    /// # use filasse::job::*;
-    /// let job = Job::default();
-    /// let status = job.duration();
-    /// ```
-    pub fn duration(&self) -> u64 {
-        self.duration
-    }
-
-    /// Set state value
-    ///
-    /// This method is used to set the value of the job's state. It takes a state in arguments. The job must alse to be mutable.
-    /// # Example :
-    /// ```
-    /// # use filasse::job::*;
-    /// let mut job = Job::default();
-    /// let status = job.set_state(State::Running);
-    /// ```
-    pub fn set_state(&mut self, value: State) {
-        self.state = value;
-    }
-
-    /// Set priority value
-    ///
-    /// This method is used to set the value of the job's priority  It takes a priority which is a u32 type in arguments. The job must alse to be mutable.
-    /// # Example :
-    /// ```
-    /// # use filasse::job::*;
-    /// let mut job = Job::default();
-    /// let status = job.set_priority(2);
-    /// ```
-    pub fn set_priority(&mut self, value: u32) {
-        self.priority = value;
-    }
-
-    /// Set duration value
-    ///
-    /// This method is used to set the value of the job's duration  It takes a duration which is a u64 type in arguments. The job must alse to be mutable.
-    /// # Example :
-    /// ```
-    /// # use filasse::job::*;
-    /// let mut job = Job::default();
-    /// let status = job.set_duration(2);
-    /// ```
-    pub fn set_duration(&mut self, value: u64) {
-        self.duration = value;
-    }
-
-    /// Change job to ready
-    ///
-    /// This method allows the job to pass the Ready state. To become ready, the job must be in the New or Running state. The job must alse to be mutable.
-    ///
-    /// # Example :
-    /// ```
-    /// # use filasse::job::*;
-    /// let mut job = Job::default(); // job = {status: State::New, priority: 0, duration: 0 }
-    /// job.ready();
-    /// ```
-    pub fn ready(&mut self) {
-        self.state = match self.state {
-            State::New => State::Ready,
-            State::Running => State::Ready,
-            _ => self.state.clone(),
+impl From<Job<Blocked>> for Job<Ready> {
+    fn from(prev: Job<Blocked>) -> Job<Ready> {
+        Job {
+            pid: prev.pid,
+            parent: prev.parent,
+            state: Ready {
+                duration: prev.state.duration,
+                priority: prev.state.priority,
+            },
         }
     }
+}
 
-    /// Lock the job
-    ///
-    /// This method allows the job to pass the Blocked state. To become Blocked, the job must be in the Running state. The job must alse to be mutable.
-    ///
-    /// # Example :
-    /// ```
-    /// # use filasse::job::*;
-    /// let mut job = Job::default(); // job = {status: State::New, priority: 0, duration: 0 }
-    /// job.set_state(State::Running);
-    /// job.lock();
-    /// ```
-    pub fn lock(&mut self) {
-        self.state = match self.state {
-            State::Running => State::Blocked,
-            _ => self.state.clone(),
+impl From<Job<Running>> for Job<Ready> {
+    fn from(prev: Job<Running>) -> Job<Ready> {
+        Job {
+            pid: prev.pid,
+            parent: prev.parent,
+            state: Ready {
+                duration: prev.state.duration,
+                priority: prev.state.priority,
+            },
         }
     }
+}
 
-    /// Unlock the job
-    ///
-    /// This method allows the job to return in the Ready state. To be unlocked, the job must be in the Locked state. The job must alse to be mutable.
-    ///
-    /// # Example :
-    /// ```
-    /// # use filasse::job::*;
-    /// let mut job = Job::default(); // job = {status: State::New, priority: 0, duration: 0 }
-    /// job.set_state(State::Blocked);
-    /// job.unlock();
-    /// ```
-    pub fn unlock(&mut self) {
-        self.state = match self.state {
-            State::Blocked => State::Ready,
-            _ => self.state.clone(),
+impl From<Job<Running>> for Job<Blocked> {
+    fn from(prev: Job<Running>) -> Job<Blocked> {
+        Job {
+            pid: prev.pid,
+            parent: prev.parent,
+            state: Blocked {
+                duration: prev.state.duration,
+                priority: prev.state.priority,
+            },
         }
     }
+}
 
-    /// Run the job
-    ///
-    /// This method allows the job to run and pass the Running state. To run, the job must be in the Ready state. The job must alse to be mutable.
-    ///
-    /// # Example :
-    /// ```
-    /// # use filasse::job::*;
-    /// let mut job = Job::default(); // job = {status: State::New, priority: 0, duration: 0 }
-    /// job.set_state(State::Ready);
-    /// job.run();
-    /// ```
-    pub fn run(&mut self) {
-        self.state = match self.state {
-            State::Ready => State::Running,
-            _ => self.state.clone(),
+impl From<Job<Ready>> for Job<Running> {
+    fn from(prev: Job<Ready>) -> Job<Running> {
+        Job {
+            pid: prev.pid,
+            parent: prev.parent,
+            state: Running {
+                duration: prev.state.duration,
+                priority: prev.state.priority,
+            },
         }
     }
+}
 
-    /// Change job to Zombie
-    ///
-    /// This method allows the job to pass the Zombie state. To become Zombie, the job must be in the Running state. The job must alse to be mutable.
-    ///
-    /// # Example :
-    /// ```
-    /// # use filasse::job::*;
-    /// let mut job = Job::default(); // job = {status: State::New, priority: 0, duration: 0 }
-    /// job.set_state(State::Running);
-    /// job.zombie();
-    /// ```
-    pub fn zombie(&mut self) {
-        self.state = match self.state {
-            State::Running => State::Zombie,
-            State::Blocked => State::Zombie,
-            _ => self.state.clone(),
-        }
-    }
-
-    /// Unschedule the job
-    ///
-    /// This method allows the job to be unschedule after its job. To become Terminated, the job must be in the Zombie state. The job must alse to be mutable.
-    ///
-    /// # Example :
-    /// ```
-    /// # use filasse::job::*;
-    /// let mut job = Job::default(); // job = {status: State::New, priority: 0, duration: 0 }
-    /// job.set_state(State::Zombie);
-    /// job.finish();
-    /// ```
-    pub fn finish(&mut self) {
-        self.state = match self.state {
-            State::Zombie => State::Terminated,
-            _ => self.state.clone(),
+impl From<Job<New>> for Job<Ready> {
+    fn from(prev: Job<New>) -> Job<Ready> {
+        Job {
+            pid: prev.pid,
+            parent: prev.parent,
+            state: Ready {
+                duration: prev.state.duration,
+                priority: prev.state.priority,
+            },
         }
     }
 }
