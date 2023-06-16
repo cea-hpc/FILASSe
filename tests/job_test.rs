@@ -4,98 +4,127 @@ mod tests {
     use filasse::job::*;
 
     #[test]
-    fn default() {
-        let foo = Job::default();
-        assert!(foo.priority() == 0 && foo.duration() == 0);
+    fn from_new_to_ready() {
+        let bar = Job {
+            pid: 1,
+            parent: 0,
+            state: New {
+                duration: 2,
+                priority: 2,
+            },
+        };
+        let bar: Job<Ready> = bar.into();
+        assert!(
+            bar.state
+                == Ready {
+                    duration: 2,
+                    priority: 2
+                }
+        );
     }
 
     #[test]
-    fn new() {
-        let foo = Job::new(1, 2);
-        assert!(foo.priority() == 1 && foo.duration() == 2);
+    fn from_ready_to_running() {
+        let bar = Job {
+            pid: 1,
+            parent: 0,
+            state: Ready {
+                duration: 2,
+                priority: 2,
+            },
+        };
+        let bar: Job<Running> = bar.into();
+        assert!(
+            bar.state
+                == Running {
+                    duration: 2,
+                    priority: 2
+                }
+        );
     }
 
     #[test]
-    fn priority() {
-        let mut foo = Job::default();
-        foo.set_priority(3);
-        assert!(foo.priority() == 3);
+    fn from_running_to_blocked() {
+        let bar = Job {
+            pid: 1,
+            parent: 0,
+            state: Running {
+                duration: 2,
+                priority: 2,
+            },
+        };
+        let bar: Job<Blocked> = bar.into();
+        assert!(
+            bar.state
+                == Blocked {
+                    duration: 2,
+                    priority: 2
+                }
+        );
     }
 
     #[test]
-    fn duration() {
-        let mut foo = Job::default();
-        foo.set_duration(3);
-        assert!(foo.duration() == 3);
+    fn from_running_to_ready() {
+        let bar = Job {
+            pid: 1,
+            parent: 0,
+            state: Running {
+                duration: 2,
+                priority: 2,
+            },
+        };
+        let bar: Job<Ready> = bar.into();
+        assert!(
+            bar.state
+                == Ready {
+                    duration: 2,
+                    priority: 2
+                }
+        );
     }
 
     #[test]
-    fn state() {
-        let mut foo = Job::default();
-        foo.set_state(State::Blocked);
-        assert!(foo.state() == State::Blocked);
+    fn from_running_to_zombie() {
+        let bar = Job {
+            pid: 1,
+            parent: 0,
+            state: Running {
+                duration: 2,
+                priority: 2,
+            },
+        };
+        let bar: Job<Zombie> = bar.into();
+        assert!(bar.state == Zombie {});
     }
 
     #[test]
-    fn is_running() {
-        let mut a = Job::default();
-        a.ready();
-        a.run();
-        assert_eq!(State::Running, a.state());
+    fn from_blocked_to_ready() {
+        let bar = Job {
+            pid: 1,
+            parent: 0,
+            state: Blocked {
+                duration: 2,
+                priority: 2,
+            },
+        };
+        let bar: Job<Ready> = bar.into();
+        assert!(
+            bar.state
+                == Ready {
+                    duration: 2,
+                    priority: 2
+                }
+        );
     }
 
     #[test]
-    fn is_unlocked() {
-        let mut a = Job::default();
-        a.set_state(State::Blocked);
-        a.unlock();
-        assert_eq!(State::Ready, a.state());
-    }
-
-    #[test]
-    fn is_locked() {
-        let mut a = Job::default();
-        a.set_state(State::Running);
-        a.lock();
-        assert_eq!(State::Blocked, a.state());
-    }
-
-    #[test]
-    fn is_zombie_run() {
-        let mut a = Job::default();
-        a.set_state(State::Running);
-        a.zombie();
-        assert_eq!(State::Zombie, a.state());
-    }
-
-    #[test]
-    fn is_zombie_blocked() {
-        let mut a = Job::default();
-        a.set_state(State::Blocked);
-        a.zombie();
-        assert_eq!(State::Zombie, a.state());
-    }
-
-    #[test]
-    fn is_finish() {
-        let mut a = Job::default();
-        a.set_state(State::Zombie);
-        a.finish();
-        assert_eq!(State::Terminated, a.state());
-    }
-
-    #[test]
-    fn is_ready_default() {
-        let mut a = Job::default();
-        a.ready();
-        assert_eq!(State::Ready, a.state());
-    }
-
-    #[test]
-    fn is_ready_run() {
-        let mut a = Job::default();
-        a.set_state(State::Running);
-        a.ready();
-        assert_eq!(State::Ready, a.state());
+    fn from_zombie_to_terminated() {
+        let bar = Job {
+            pid: 1,
+            parent: 0,
+            state: Zombie {},
+        };
+        let bar: Job<Terminated> = bar.into();
+        assert!(bar.state == Terminated {});
     }
 }
