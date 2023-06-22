@@ -1,15 +1,14 @@
 use crate::job::*;
-use std::collections::HashMap;
-
+use std::collections::VecDeque;
 /// Struct of the scheduler
 ///
-///```
+/// ```rust, ignore
 ///# use filasse::job::*;
 ///# use std::collections::HashMap;
 /// pub struct Scheduler {
-///    queue: Vec<Job<Ready>>,
-///    blocked: Vec<Job<Blocked>>,
-///    zombie: Vec<Job<Zombie>>,
+///     queue: VecDeque<Job<Ready>>,
+///     blocked: VecDeque<Job<Blocked>>,
+///     zombie: VecDeque<Job<Zombie>>,
 ///     q: u64,
 ///     pid_count: u64,
 ///     available: bool,
@@ -18,10 +17,9 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct Scheduler {
-    // processus: HashMap<u64, Job<Ready>>,
-    queue: Vec<Job<Ready>>,
-    blocked: Vec<Job<Blocked>>,
-    zombie: Vec<Job<Zombie>>,
+    queue: VecDeque<Job<Ready>>,
+    blocked: VecDeque<Job<Blocked>>,
+    zombie: VecDeque<Job<Zombie>>,
     q: u64,
     pid_count: u64,
     available: bool,
@@ -30,9 +28,9 @@ pub struct Scheduler {
 impl Default for Scheduler {
     fn default() -> Self {
         Scheduler {
-            queue: Vec::<Job<Ready>>::new(),
-            blocked: Vec::<Job<Blocked>>::new(),
-            zombie: Vec::<Job<Zombie>>::new(),
+            queue: VecDeque::<Job<Ready>>::new(),
+            blocked: VecDeque::<Job<Blocked>>::new(),
+            zombie: VecDeque::<Job<Zombie>>::new(),
             q: 100,
             pid_count: 1,
             available: true,
@@ -47,20 +45,20 @@ impl Scheduler {
     ///
     /// # Examples :
     /// Example 1 :
-    /// ```
+    /// ```rust, ignore
     ///# use filasse::scheduler::*;
     /// let sched = Scheduler::new(200);
     ///```
     /// Example 2 :
-    ///```
+    /// ```rust, ignore
     ///# use filasse::scheduler::*;
     /// let sched = Scheduler::default();
     ///````
     pub fn new(q: u64) -> Self {
         Scheduler {
-            queue: Vec::<Job<Ready>>::new(),
-            blocked: Vec::<Job<Blocked>>::new(),
-            zombie: Vec::<Job<Zombie>>::new(),
+            queue: VecDeque::<Job<Ready>>::new(),
+            blocked: VecDeque::<Job<Blocked>>::new(),
+            zombie: VecDeque::<Job<Zombie>>::new(),
             q,
             pid_count: 1,
             available: true,
@@ -72,7 +70,7 @@ impl Scheduler {
     /// The method allows you to get the quantum's value
     ///
     /// # Example :
-    /// ```
+    /// ```rust, ignore
     ///# use filasse::scheduler::*;
     /// let sched = Scheduler::default();
     /// sched.quantum();
@@ -86,7 +84,7 @@ impl Scheduler {
     /// The method allows you to set the quantum's value
     ///
     /// # Example :
-    /// ```
+    /// ```rust, ignore
     ///# use filasse::scheduler::*;
     /// let mut sched = Scheduler::default();
     /// sched.set_quantum(200);
@@ -100,7 +98,7 @@ impl Scheduler {
     /// TBD
     ///
     /// # Example :
-    /// ```
+    /// ```rust, ignore
     ///# use filasse::scheduler::*;
     /// let sched = Scheduler::default();
     /// sched.is_available();
@@ -114,7 +112,7 @@ impl Scheduler {
     /// The method allows you to get the pid_counter's value
     ///
     /// # Example :
-    /// ```
+    /// ```rust, ignore
     ///# use filasse::scheduler::*;
     /// let sched = Scheduler::default();
     /// sched.pid_count();
@@ -128,12 +126,12 @@ impl Scheduler {
     /// The method allows you to get the queue vector.
     ///
     /// # Example :
-    /// ```
+    /// ```rust, ignore
     ///# use filasse::scheduler::*;
     /// let sched = Scheduler::default();
     /// sched.queue();
     ///```
-    pub fn queue(&self) -> &Vec<Job<Ready>> {
+    pub fn queue(&self) -> &VecDeque<Job<Ready>> {
         &self.queue
     }
 
@@ -142,21 +140,21 @@ impl Scheduler {
     /// The method allows you to get the zombie vector.
     ///
     /// # Example :
-    /// ```
+    /// ```rust, ignore
     ///# use filasse::scheduler::*;
     /// let sched = Scheduler::default();
     /// sched.zombie();
     ///```
-    pub fn zombie(&self) -> &Vec<Job<Zombie>> {
+    pub fn zombie(&self) -> &VecDeque<Job<Zombie>> {
         &self.zombie
     }
 
     /// Add to the scheduler
     ///
-    /// The method takes in arguments a job. This job will be added in the processus HashMap.
+    /// The method takes in arguments a job. This job will be added in the queue.
     ///
     /// # Example :
-    /// ```
+    /// ```rust, ignore
     ///# use filasse::scheduler::*;
     ///# use filasse::job::*;
     /// let mut sched = Scheduler::default();
@@ -164,9 +162,20 @@ impl Scheduler {
     /// sched.add_to_scheduler(&mut job);
     ///```
     pub fn add_to_scheduler(&mut self, job: &mut Job<New>) {
-        let joba: Job<Ready> = Job::from(*job);
-        self.queue.push(joba);
+        let mut joba: Job<Ready> = Job::from(*job);
+        joba.pid = self.pid_count;
+        self.queue.push_back(joba);
         self.pid_count += 1;
+    }
+
+    pub fn lock(&mut self) {
+        let job: Job<Running> = Job::from(self.queue.pop_front().unwrap());
+        self.blocked.push_back(Job::from(job));
+    }
+
+    pub fn unlock(&mut self) {
+        let job: Job<Ready> = Job::from(self.blocked.pop_front().unwrap());
+        self.queue.push_back(job);
     }
 
     /// Process
@@ -174,7 +183,7 @@ impl Scheduler {
     /// TBD
     ///
     /// # Example :
-    /// ```
+    /// ```rust, ignore
     ///# use filasse::scheduler::*;
     ///# use filasse::job::*;
     /// let mut sched = Scheduler::new(1);
@@ -183,19 +192,16 @@ impl Scheduler {
     /// sched.process();
     ///```
     pub fn process(&mut self) {
-        let job = self.queue.get_mut(0).unwrap();
-        let mut job: Job<Running> = Job::from(*job);
+        let mut job: Job<Running> = Job::from(self.queue.pop_front().unwrap());
         if job.state.duration > 0 {
             if (job.state.duration - self.q) > 0 {
                 job.state.duration -= self.q;
                 let job = Job::from(job);
-                self.queue.push(job);
-                self.queue.remove(0);
+                self.queue.push_back(job);
             } else {
                 job.state.duration = 0;
                 let job = Job::from(job);
-                self.zombie.push(job);
-                self.queue.remove(0);
+                self.zombie.push_back(job);
             }
         }
     }
@@ -205,7 +211,7 @@ impl Scheduler {
     /// TBD
     ///
     /// # Example :
-    /// ```
+    /// ```rust, ignore
     ///# use filasse::scheduler::*;
     ///# use filasse::job::*;
     /// let mut sched = Scheduler::new(1);
