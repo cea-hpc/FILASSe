@@ -74,13 +74,13 @@ impl State for Terminated {}
 /// Job Creation
 ///
 /// # Example :
-/// ```
+/// ```rust, ignore
 /// # use filasse::job::*;
 /// let foo : Job<New>= Job::new(5, 2, 2, 1);
 /// # assert!(foo.state.duration == 2);
 /// ```
 impl Job<New> {
-    pub fn new(pid: u32, parent: u32, duration: u64, priority: u32) -> Self {
+    pub fn new(pid: u64, parent: u64, duration: u64, priority: u32) -> Self {
         Self {
             pid,
             parent,
@@ -89,6 +89,14 @@ impl Job<New> {
     }
 }
 
+/// Job Default
+///
+/// # Example :
+/// ```rust, ignore
+/// # use filasse::job::*;
+/// let foo : Job<New>= Job::default();
+/// # assert!(foo.state == New{duration: 0, priority: 0});
+/// ```
 impl Default for Job<New> {
     fn default() -> Self {
         Self {
@@ -101,13 +109,14 @@ impl Default for Job<New> {
         }
     }
 }
+
 /// Job
 ///
-///
+/// Pid, parent pid, state
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Job<Status: State> {
-    pub pid: u32,
-    pub parent: u32,
+    pub pid: u64,
+    pub parent: u64,
     pub state: Status,
 }
 
@@ -170,6 +179,16 @@ impl From<Job<Running>> for Job<Blocked> {
     }
 }
 
+/// Job conversion from Ready to Running
+///
+/// # Example :
+/// ```rust, ignore
+/// # use filasse::job::*;
+///# let foo : Job<New>= Job::new(5, 2, 2, 1);
+///# let bar : Job<Ready> = Job::from(foo);
+/// let foo: Job<Running> = Job::from(bar);
+/// # assert!(foo.state == Running{duration: 2, priority: 1});
+/// ```
 impl From<Job<Ready>> for Job<Running> {
     fn from(prev: Job<Ready>) -> Job<Running> {
         Job {
@@ -183,6 +202,15 @@ impl From<Job<Ready>> for Job<Running> {
     }
 }
 
+/// Job conversion from New to Reay
+///
+/// # Example :
+/// ```rust, ignore
+/// # use filasse::job::*;
+/// let foo : Job<New>= Job::new(5, 2, 2, 1);
+/// let bar : Job<Ready> = Job::from(foo);
+/// # assert!(bar.state == Ready{duration: 2, priority: 1});
+/// ```
 impl From<Job<New>> for Job<Ready> {
     fn from(prev: Job<New>) -> Job<Ready> {
         Job {
