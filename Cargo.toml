@@ -5,3 +5,10 @@ edition = "2021"
 
 [dependencies]
 nix = "0.26.2"
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "criterion_vec"
+harness = false
