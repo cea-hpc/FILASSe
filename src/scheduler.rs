@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 ///
 /// ```rust, ignore
 ///# use filasse::job::*;
-///# use std::collections::HashMap;
+///# use std::collections::VecDeque;
 /// pub struct Scheduler {
 ///     queue: VecDeque<Job<Ready>>,
 ///     blocked: VecDeque<Job<Blocked>>,
@@ -205,36 +205,36 @@ impl Scheduler {
             }
         }
     }
+}
 
-    /// Algorithm Round robin
-    ///
-    /// TBD
-    ///
-    /// # Example :
-    /// ```rust, ignore
-    ///# use filasse::scheduler::*;
-    ///# use filasse::job::*;
-    /// let mut sched = Scheduler::new(1);
-    /// let mut job = Job::new(1, 2, 2, 2);
-    /// sched.add_to_scheduler(&mut job);
-    /// sched.process();
-    /// sched.round_robin();
-    ///```
-    pub fn round_robin(&mut self) {
-        loop {
-            if !self.queue.is_empty() {
-                match self.queue.get(0) {
-                    Some(_) => {
-                        println!("SUR LE PROCESSUS : {:?}", self.queue[0]);
-                        self.process(); // pendant Q temps
-                    }
-                    None => break,
+/// Algorithm Round robin
+///
+/// TBD
+///
+/// # Example :
+/// ```rust, ignore
+///# use filasse::scheduler::*;
+///# use filasse::job::*;
+/// let mut sched = Scheduler::new(1);
+/// let mut job = Job::new(1, 2, 2, 2);
+/// sched.add_to_scheduler(&mut job);
+/// sched.process();
+/// round_robin(&mut sched);
+///```
+pub fn round_robin(sched: &mut Scheduler) {
+    loop {
+        if !sched.queue.is_empty() {
+            match sched.queue.get(0) {
+                Some(_) => {
+                    println!("SUR LE PROCESSUS : {:?}", sched.queue[0]);
+                    sched.process(); // pendant Q temps
                 }
-                println!("Queue : {:?}\nZombie : {:?}\n", self.queue(), self.zombie);
-            } else {
-                println!("No Processus");
-                break;
+                None => break,
             }
+            println!("Queue : {:?}\nZombie : {:?}\n", sched.queue(), sched.zombie);
+        } else {
+            println!("No Processus");
+            break;
         }
     }
 }

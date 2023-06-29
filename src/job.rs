@@ -1,3 +1,33 @@
+// type Processid = u64;
+
+// struct JobId {
+//     id: Processid,
+//     parent_id: Processid,
+// }
+
+// struct RunnableJob {
+//     duration: u64,
+//     priority: u32,
+// }
+
+// enum Job {
+//     New(JobId, RunnableJob),
+//     Ready(JobId, RunnableJob),
+//     Running(JobId, RunnableJob),
+//     Blocked(JobId, RunnableJob),
+//     Zombie(JobId),
+//     Terminated(JobId),
+// }
+
+// impl Job {
+//     pub fn new(parent_id: Processid, duration: u64, priority: u32) -> Job {
+//         Job::New(
+//             JobId { id: 0, parent_id },
+//             RunnableJob { duration, priority },
+//         )
+//     }
+// }
+
 /// Trait State
 ///
 /// This trait allows you to obtain only the right States from the automaton.
@@ -71,6 +101,16 @@ impl State for Zombie {}
 pub struct Terminated {}
 impl State for Terminated {}
 
+/// Job
+///
+/// Pid, parent pid, state
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Job<Status: State> {
+    pub pid: u64,
+    pub parent: u64,
+    pub state: Status,
+}
+
 /// Job Creation
 ///
 /// # Example :
@@ -108,16 +148,6 @@ impl Default for Job<New> {
             },
         }
     }
-}
-
-/// Job
-///
-/// Pid, parent pid, state
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub struct Job<Status: State> {
-    pub pid: u64,
-    pub parent: u64,
-    pub state: Status,
 }
 
 impl From<Job<Zombie>> for Job<Terminated> {
