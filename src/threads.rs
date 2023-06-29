@@ -14,6 +14,15 @@ pub struct Thread {
     pub idle: Mutex<VecDeque<ucontext_t>>,
     // pub job: Job<dyn State>,
 }
+<<<<<<< Updated upstream
+<<<<<<< HEAD
+=======
+
+extern "C" {
+    fn fct_export();
+}
+
+>>>>>>> Stashed changes
 unsafe impl Send for VirtualProcessor {}
 unsafe impl Sync for VirtualProcessor {}
 static VPROCESSORS: VirtualProcessor = VirtualProcessor(Vec::new());
@@ -42,6 +51,23 @@ impl Thread {
         }
         ctx
     }
+
+    pub fn set() -> ucontext_t {
+        let mut ctx: ucontext_t = Self::create_ctx();
+        unsafe {
+            getcontext(&mut ctx as *mut ucontext_t);
+        }
+        unsafe {
+            let _fct = Box::new(fct_export);
+            makecontext(
+                &mut ctx as *mut ucontext_t,
+                mem::transmute::<unsafe extern "C" fn(), extern "C" fn()>(fct_export),
+                0,
+            );
+        }
+        ctx
+    }
+
     /// Swap list
     ///
     ///```rust, ignore
@@ -92,4 +118,48 @@ impl Thread {
             self.swap_list();
         }
     }
+
+    /// Take work form another Virtual processor
+    ///
+    /// ```rust
+    ///# use filasse::threads::*;
+    ///# use std::collections::VecDeque;
+    ///# use nix::libc::ucontext_t;
+    ///# use std::sync::Arc;
+    ///# use std::sync::Mutex;
+    ///# let mut ctx: ucontext_t = CtxT::create_ctx();
+    ///# let mut tt = CtxT {    id: 1,    current: ctx,    ready: VecDeque::new(),    idle: VecDeque::new()};
+    ///# let mut tt2 = CtxT {    id: 1,    current: ctx,    ready: VecDeque::new(),    idle: VecDeque::new()};
+    ///# let _vp = vec![tt,tt2];
+    ///# let vp = Arc::new(Mutex::new(_vp));
+    ///vp.process[0].work_take(vp);
+    pub fn work_take(&mut self) {
+        let mut _vp = &VPROCESSORS.0;
+        let mut _v = _vp.lock().unwrap();
+        _v.iter_mut().for_each(|x| {
+            if x.id != self.id {
+                if let Some(ctx) = x.idle.pop_front() {
+                    x.idle.push_front(ctx);
+                }
+            }
+        });
+        drop(_v);
+    }
+
+    pub fn ctx_yield(&mut self) {
+        let mut _current: ucontext_t;
+        let mut _next: Option<ucontext_t>;
+
+        _current = self.current;
+        _next = self.ready.pop_front();
+
+        if let Some(_ctx) = _next {
+            unimplemented!()
+        } else {
+            self.swap_ctx();
+        }
+        // thread_swap(_, _);
+    }
 }
+=======
+>>>>>>> 6307f0a0e13fd14470fcb6aef55dc53c4a27a8fe
