@@ -14,15 +14,11 @@ pub struct Thread {
     pub idle: Mutex<VecDeque<ucontext_t>>,
     // pub job: Job<dyn State>,
 }
-<<<<<<< Updated upstream
-<<<<<<< HEAD
-=======
 
 extern "C" {
     fn fct_export();
 }
 
->>>>>>> Stashed changes
 unsafe impl Send for VirtualProcessor {}
 unsafe impl Sync for VirtualProcessor {}
 static VPROCESSORS: VirtualProcessor = VirtualProcessor(Vec::new());
@@ -34,7 +30,7 @@ impl Thread {
     ///```rust, ignore
     ///# use filasse::threads::*;
     ///# use nix::libc::ucontext_t;
-    ///let ctx = CtxT::create_ctx();
+    ///let ctx = Thread::create_ctx();
     ///```
     pub fn create_ctx() -> ucontext_t {
         let ctx: ucontext_t;
@@ -74,7 +70,7 @@ impl Thread {
     ///# use filasse::threads::*;
     ///# use nix::libc::ucontext_t;
     ///# use std::collections::VecDeque;
-    ///let mut a = CtxT{id: 0, current: CtxT::create_ctx(), ready: VecDeque::new(), idle: VecDeque::from([CtxT::create_ctx()]) };
+    ///let mut a = Thread{id: 0, current: Thread::create_ctx(), ready: VecDeque::new(), idle: VecDeque::from([Thread::create_ctx()]) };
     ///a.swap_list();
     ///assert!(a.idle.is_empty());
     ///assert!(!a.ready.is_empty());
@@ -97,13 +93,13 @@ impl Thread {
     ///# use nix::libc::ucontext_t;
     ///# use std::collections::VecDeque;
     ///let mut vp = VP(Vec::new());
-    ///let mut current = CtxT::get();
-    ///let mut a =CtxT{id: 0, current: current, ready: VecDeque::from([CtxT::create_ctx()]), idle: VecDeque::from([CtxT::create_ctx()]) };
+    ///let mut current = Thread::get();
+    ///let mut a =Thread{id: 0, current: current, ready: VecDeque::from([Thread::create_ctx()]), idle: VecDeque::from([Thread::create_ctx()]) };
     ///vp.0.push(a);
     ///
     ///vp.0.clone().swap_ctx(&mut vp);
     ///
-    ///assert!(vp.0.current == CtxT::create_ctx());
+    ///assert!(vp.0.current == Thread::create_ctx());
     ///```
     pub fn swap_ctx(&mut self) {
         if let Some(mut next) = self.ready.pop_front() {
@@ -161,5 +157,3 @@ impl Thread {
         // thread_swap(_, _);
     }
 }
-=======
->>>>>>> 6307f0a0e13fd14470fcb6aef55dc53c4a27a8fe
