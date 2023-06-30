@@ -4,7 +4,8 @@ use std::sync::Mutex;
 use std::{collections::VecDeque, mem};
 
 #[repr(transparent)]
-pub struct VirtualProcessor(Vec<Thread>);
+#[derive(Debug)]
+pub struct VirtualProcessor(pub Vec<Thread>);
 
 #[derive(Debug)]
 pub struct Thread {
@@ -21,7 +22,7 @@ extern "C" {
 
 unsafe impl Send for VirtualProcessor {}
 unsafe impl Sync for VirtualProcessor {}
-static VPROCESSORS: VirtualProcessor = VirtualProcessor(Vec::new());
+pub static mut VPROCESSORS: VirtualProcessor = VirtualProcessor(Vec::new());
 
 impl Thread {
     /// Create context zeroed
@@ -70,9 +71,10 @@ impl Thread {
     ///# use filasse::threads::*;
     ///# use nix::libc::ucontext_t;
     ///# use std::collections::VecDeque;
-    ///let mut a = Thread{id: 0, current: Thread::create_ctx(), ready: VecDeque::new(), idle: VecDeque::from([Thread::create_ctx()]) };
+    ///# use std::sync::Mutex;
+    ///let mut a = Thread{id: 0, current: Thread::create_ctx(), ready: VecDeque::new(), idle: Mutex::new(VecDeque::from([Thread::create_ctx()])) };
     ///a.swap_list();
-    ///assert!(a.idle.is_empty());
+    ///assert!(a.idle.lock().unwrap().is_empty());
     ///assert!(!a.ready.is_empty());
     ///```
     pub fn swap_list(&mut self) {
@@ -90,16 +92,17 @@ impl Thread {
     /// Allow to change the current context with another context
     ///```rust, no_run, ignore
     ///# use filasse::threads::*;
+    ///# use std::sync::Mutex;
     ///# use nix::libc::ucontext_t;
     ///# use std::collections::VecDeque;
-    ///let mut vp = VP(Vec::new());
+    /// let mut vp: VirtualProcessor = VirtualProcessor(Vec::new());
     ///let mut current = Thread::get();
-    ///let mut a =Thread{id: 0, current: current, ready: VecDeque::from([Thread::create_ctx()]), idle: VecDeque::from([Thread::create_ctx()]) };
+    ///let mut a =Thread{id: 0, current: current, ready: VecDeque::from([Thread::create_ctx()]), idle: Mutex::new(VecDeque::from([Thread::create_ctx()])) };
     ///vp.0.push(a);
     ///
-    ///vp.0.clone().swap_ctx(&mut vp);
+    ///vp.0[0].swap_ctx();
     ///
-    ///assert!(vp.0.current == Thread::create_ctx());
+    ///assert!(vp.0[0].current == Thread::create_ctx());
     ///```
     pub fn swap_ctx(&mut self) {
         if let Some(mut next) = self.ready.pop_front() {
@@ -124,23 +127,29 @@ impl Thread {
     ///# use std::sync::Arc;
     ///# use std::sync::Mutex;
     ///# let mut ctx: ucontext_t = Thread::create_ctx();
-    ///# let mut tt = Thread {    id: 1,    current: ctx,    ready: VecDeque::new(),    idle: VecDeque::new()};
-    ///# let mut tt2 = Thread {    id: 1,    current: ctx,    ready: VecDeque::new(),    idle: VecDeque::new()};
-    ///# let _vp = vec![tt,tt2];
-    ///# let vp = Arc::new(Mutex::new(_vp));
-    ///vp.process[0].work_take(vp);
-    // pub fn work_take(&mut self) {
-    //     let mut _vp = &VPROCESSORS.0;
-    //     let mut _v = _vp.lock().unwrap();
-    //     _v.iter_mut().for_each(|x| {
-    //         if x.id != self.id {
-    //             if let Some(ctx) = x.idle.pop_front() {
-    //                 x.idle.push_front(ctx);
-    //             }
-    //         }
-    //     });
-    //     drop(_v);
-    // }
+    ///# let mut tt = Thread {    id: 1,    current: Thread::create_ctx(),    ready: VecDeque::new(),    idle: Mutex::new(VecDeque::new())};
+    ///# let mut tt2 = Thread {    id: 2,    current: Thread::create_ctx(),    ready: VecDeque::new(),    idle: Mutex::new(VecDeque::from([ctx]))};
+    ///unsafe {
+    ///VPROCESSORS.0.push(tt);
+    ///VPROCESSORS.0.push(tt2);
+    ///VPROCESSORS.0[0].work_take();
+    ///assert!(VPROCESSORS.0[0].idle.lock().unwrap().is_empty() == false);
+    ///}
+    pub fn work_take(&mut self) {
+        unsafe {
+            let mut _vp = &VPROCESSORS.0;
+            println!("{:?}", _vp);
+            _vp.into_iter().for_each(|x| {
+                if self.id != x.id {
+                    let mut _mutex = x.idle.lock().unwrap().pop_front().unwrap();
+                    let mut _current = self.idle.lock().unwrap();
+                    _current.push_back(_mutex);
+                    drop(_current);
+                    drop(_mutex);
+                }
+            });
+        }
+    }
 
     pub fn ctx_yield(&mut self) {
         let mut _current: ucontext_t;
