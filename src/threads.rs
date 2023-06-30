@@ -99,22 +99,17 @@ impl Thread {
     ///let mut current = Thread::get();
     ///let mut a =Thread{id: 0, current: current, ready: VecDeque::from([Thread::create_ctx()]), idle: Mutex::new(VecDeque::from([Thread::create_ctx()])) };
     ///vp.0.push(a);
-    ///
-    ///vp.0[0].swap_ctx();
+    ///let next = vp.0[0].ready.pop_front().unwrap();
+    ///vp.0[0].swap_ctx(next);
     ///
     ///assert!(vp.0[0].current == Thread::create_ctx());
     ///```
-    pub fn swap_ctx(&mut self) {
-        if let Some(mut next) = self.ready.pop_front() {
-            unsafe {
-                swapcontext(
-                    &mut self.current as *mut ucontext_t,
-                    &mut next as *mut ucontext_t,
-                );
-            }
-            self.current = next;
-        } else {
-            self.swap_list();
+    pub fn swap_ctx(&mut self, mut next: ucontext_t) {
+        unsafe {
+            swapcontext(
+                &mut self.current as *mut ucontext_t,
+                &mut next as *mut ucontext_t,
+            );
         }
     }
 
@@ -168,11 +163,17 @@ impl Thread {
 
     ///}
     pub fn ctx_yield(&mut self) {
-        // let mut _current: ucontext_t;
-        // let mut _next: Option<ucontext_t>;
+        let mut _current: ucontext_t;
+        let mut _next: Option<ucontext_t>;
 
-        // _current = self.current;
-        self.swap_ctx();
+        _current = self.current;
+        _next = self.ready.pop_front();
+
+        if let Some(next) = _next {
+            self.swap_ctx(next);
+        } else {
+            self.swap_list();
+        }
 
         // if !_next {
 
