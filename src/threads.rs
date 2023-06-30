@@ -1,4 +1,3 @@
-use crate::job::*;
 use nix::libc::{getcontext, makecontext, swapcontext, ucontext_t};
 use std::sync::Mutex;
 use std::{collections::VecDeque, mem};
@@ -83,7 +82,8 @@ impl Thread {
             self.ready = _idle.clone();
             _idle.clear();
         } else {
-            // self.work_take(self);
+            drop(_idle);
+            self.work_take();
         }
     }
 
@@ -124,7 +124,6 @@ impl Thread {
     ///# use filasse::threads::*;
     ///# use std::collections::VecDeque;
     ///# use nix::libc::ucontext_t;
-    ///# use std::sync::Arc;
     ///# use std::sync::Mutex;
     ///# let mut ctx: ucontext_t = Thread::create_ctx();
     ///# let mut tt = Thread {    id: 1,    current: Thread::create_ctx(),    ready: VecDeque::new(),    idle: Mutex::new(VecDeque::new())};
@@ -139,30 +138,47 @@ impl Thread {
         unsafe {
             let mut _vp = &VPROCESSORS.0;
             println!("{:?}", _vp);
-            _vp.into_iter().for_each(|x| {
+            _vp.iter().for_each(|x| {
                 if self.id != x.id {
                     let mut _mutex = x.idle.lock().unwrap().pop_front().unwrap();
                     let mut _current = self.idle.lock().unwrap();
                     _current.push_back(_mutex);
                     drop(_current);
-                    drop(_mutex);
                 }
             });
         }
     }
 
+    /// Take work form another Virtual processor
+    ///
+    /// ```rust,ignore
+    ///# use filasse::threads::*;
+    ///# use std::collections::VecDeque;
+    ///# use nix::libc::ucontext_t;
+    ///# use std::sync::Mutex;
+    ///# let mut ctx: ucontext_t = Thread::create_ctx();
+    ///# let mut tt = Thread {    id: 1,    current: Thread::create_ctx(),    ready: VecDeque::new(),    idle: Mutex::new(VecDeque::new())};
+    ///# let mut tt2 = Thread {    id: 2,    current: Thread::create_ctx(),    ready: VecDeque::new(),    idle: Mutex::new(VecDeque::from([ctx]))};
+    ///unsafe {
+    ///VPROCESSORS.0.push(tt);
+    ///VPROCESSORS.0.push(tt2);
+    ///VPROCESSORS.0[0].ctx_yield();
+    /// dbg!(&VPROCESSORS);
+    ///assert!(VPROCESSORS.0[0].idle.lock().unwrap().is_empty() == false);
+
+    ///}
     pub fn ctx_yield(&mut self) {
-        let mut _current: ucontext_t;
-        let mut _next: Option<ucontext_t>;
+        // let mut _current: ucontext_t;
+        // let mut _next: Option<ucontext_t>;
 
-        _current = self.current;
-        _next = self.ready.pop_front();
+        // _current = self.current;
+        self.swap_ctx();
 
-        if let Some(_ctx) = _next {
-            unimplemented!()
-        } else {
-            self.swap_ctx();
-        }
+        // if !_next {
+
+        // } else {
+        //     self.swap_ctx();
+        // }
         // thread_swap(_, _);
     }
 }
