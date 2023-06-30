@@ -71,20 +71,24 @@ impl Thread {
     ///# use nix::libc::ucontext_t;
     ///# use std::collections::VecDeque;
     ///# use std::sync::Mutex;
-    ///let mut a = Thread{id: 0, current: Thread::create_ctx(), ready: VecDeque::new(), idle: Mutex::new(VecDeque::from([Thread::create_ctx()])) };
-    ///a.swap_list();
-    ///assert!(a.idle.lock().unwrap().is_empty());
-    ///assert!(!a.ready.is_empty());
+    /// let mut vp: VirtualProcessor = VirtualProcessor(Vec::new());
+    ///let mut current = Thread::get();
+    ///let mut a =Thread{id: 0, current: current, ready: VecDeque::new(), idle: Mutex::new(VecDeque::from([Thread::create_ctx()])) };
+    ///vp.0.push(a);
+    ///vp.0[0].swap_list();
+    ///assert!(vp.0[0].current == Thread::create_ctx());
     ///```
     pub fn swap_list(&mut self) {
         let mut _idle = self.idle.lock().unwrap();
         if !_idle.is_empty() {
             self.ready = _idle.clone();
             _idle.clear();
+            drop(_idle);
         } else {
             drop(_idle);
             self.work_take();
         }
+        self.ctx_yield();
     }
 
     /// Swap the context
@@ -132,12 +136,11 @@ impl Thread {
     pub fn work_take(&mut self) {
         unsafe {
             let mut _vp = &VPROCESSORS.0;
-            println!("{:?}", _vp);
             _vp.iter().for_each(|x| {
                 if self.id != x.id {
-                    let mut _mutex = x.idle.lock().unwrap().pop_front().unwrap();
+                    let mut _next = x.idle.lock().unwrap().pop_front().unwrap();
                     let mut _current = self.idle.lock().unwrap();
-                    _current.push_back(_mutex);
+                    _current.push_back(_next);
                     drop(_current);
                 }
             });
@@ -145,6 +148,7 @@ impl Thread {
     }
 
     /// Take work form another Virtual processor
+    /// The example cannot run dut to swap_ctx.
     ///
     /// ```rust,ignore
     ///# use filasse::threads::*;
@@ -160,7 +164,6 @@ impl Thread {
     ///VPROCESSORS.0[0].ctx_yield();
     /// dbg!(&VPROCESSORS);
     ///assert!(VPROCESSORS.0[0].idle.lock().unwrap().is_empty() == false);
-
     ///}
     pub fn ctx_yield(&mut self) {
         let mut _current: ucontext_t;
@@ -170,6 +173,8 @@ impl Thread {
         _next = self.ready.pop_front();
 
         if let Some(next) = _next {
+            self.current = next;
+            self.idle.lock().unwrap().push_back(_current);
             self.swap_ctx(next);
         } else {
             self.swap_list();
