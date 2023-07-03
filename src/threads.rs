@@ -1,18 +1,16 @@
+use crate::job::*;
 use nix::libc::{getcontext, makecontext, swapcontext, ucontext_t};
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
 #[repr(transparent)]
-#[derive(Debug)]
 pub struct VirtualProcessor(pub Vec<Thread>);
 
-#[derive(Debug)]
 pub struct Thread {
     pub id: u64,
-    pub current: ucontext_t,
-    pub ready: VecDeque<ucontext_t>,
-    pub idle: Mutex<VecDeque<ucontext_t>>,
-    // pub job: Job<dyn State>,
+    pub current: Job,
+    pub ready: VecDeque<Job>,
+    pub idle: Mutex<VecDeque<Job>>,
 }
 
 unsafe impl Send for VirtualProcessor {}
@@ -23,43 +21,42 @@ fn algorithm_converter(function: fn()) -> extern "C" fn() {
     unsafe { std::mem::transmute::<fn(), extern "C" fn()>(function) }
 }
 
+/// Create context zeroed
+///
+/// The fonction is used to create a zeroed context
+///```rust, ignore
+///# use filasse::threads::*;
+///# use nix::libc::ucontext_t;
+///let ctx = Thread::create_ctx();
+///```
+pub fn create_ctx() -> ucontext_t {
+    let ctx: ucontext_t;
+    unsafe {
+        ctx = std::mem::MaybeUninit::<ucontext_t>::zeroed().assume_init();
+    };
+    ctx
+}
+
+pub fn get() -> ucontext_t {
+    let mut ctx: ucontext_t = create_ctx();
+    unsafe {
+        getcontext(&mut ctx as *mut ucontext_t);
+    }
+    ctx
+}
+
+// TODO
+pub fn set_context(algorithm: extern "C" fn(), argc: i32) -> ucontext_t {
+    let mut ctx: ucontext_t = create_ctx();
+    unsafe {
+        getcontext(&mut ctx as *mut ucontext_t);
+    }
+    unsafe {
+        makecontext(&mut ctx as *mut ucontext_t, algorithm, argc);
+    }
+    ctx
+}
 impl Thread {
-    /// Create context zeroed
-    ///
-    /// The fonction is used to create a zeroed context
-    ///```rust, ignore
-    ///# use filasse::threads::*;
-    ///# use nix::libc::ucontext_t;
-    ///let ctx = Thread::create_ctx();
-    ///```
-    pub fn create_ctx() -> ucontext_t {
-        let ctx: ucontext_t;
-        unsafe {
-            ctx = std::mem::MaybeUninit::<ucontext_t>::zeroed().assume_init();
-        };
-        ctx
-    }
-
-    pub fn get() -> ucontext_t {
-        let mut ctx: ucontext_t = Self::create_ctx();
-        unsafe {
-            getcontext(&mut ctx as *mut ucontext_t);
-        }
-        ctx
-    }
-
-    // TODO
-    pub fn set(algorithm: extern "C" fn(), argc: i32) -> ucontext_t {
-        let mut ctx: ucontext_t = Self::create_ctx();
-        unsafe {
-            getcontext(&mut ctx as *mut ucontext_t);
-        }
-        unsafe {
-            makecontext(&mut ctx as *mut ucontext_t, algorithm, argc);
-        }
-        ctx
-    }
-
     /// Swap list
     ///
     ///```rust, ignore
@@ -105,12 +102,15 @@ impl Thread {
     ///
     ///assert!(vp.0[0].current == Thread::create_ctx());
     ///```
-    pub fn swap_ctx(&mut self, mut next: ucontext_t) {
-        unsafe {
-            swapcontext(
-                &mut self.current as *mut ucontext_t,
-                &mut next as *mut ucontext_t,
-            );
+    pub fn swap_ctx(&mut self, next: Job) {
+        match (self.current, next) {
+            (Job::Running(_, mut _current), Job::Ready(_, mut _next)) => unsafe {
+                swapcontext(
+                    &mut _current.context as *mut ucontext_t,
+                    &mut _next.context as *mut ucontext_t,
+                );
+            },
+            _ => panic!("Bad state of job"),
         }
     }
 
@@ -165,8 +165,8 @@ impl Thread {
     ///assert!(VPROCESSORS.0[0].idle.lock().unwrap().is_empty() == false);
     ///}
     pub fn ctx_yield(&mut self) {
-        let mut _current: ucontext_t;
-        let mut _next: Option<ucontext_t>;
+        let mut _current: Job;
+        let mut _next: Option<Job>;
 
         _current = self.current;
         _next = self.ready.pop_front();
