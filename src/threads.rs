@@ -1,6 +1,6 @@
 use nix::libc::{getcontext, makecontext, swapcontext, ucontext_t};
+use std::collections::VecDeque;
 use std::sync::Mutex;
-use std::{collections::VecDeque, mem};
 
 #[repr(transparent)]
 #[derive(Debug)]
@@ -15,13 +15,13 @@ pub struct Thread {
     // pub job: Job<dyn State>,
 }
 
-extern "C" {
-    fn fct_export();
-}
-
 unsafe impl Send for VirtualProcessor {}
 unsafe impl Sync for VirtualProcessor {}
 pub static mut VPROCESSORS: VirtualProcessor = VirtualProcessor(Vec::new());
+
+fn algorithm_converter(function: fn()) -> extern "C" fn() {
+    unsafe { std::mem::transmute::<fn(), extern "C" fn()>(function) }
+}
 
 impl Thread {
     /// Create context zeroed
@@ -48,18 +48,14 @@ impl Thread {
         ctx
     }
 
-    pub fn set() -> ucontext_t {
+    // TODO
+    pub fn set(algorithm: extern "C" fn(), argc: i32) -> ucontext_t {
         let mut ctx: ucontext_t = Self::create_ctx();
         unsafe {
             getcontext(&mut ctx as *mut ucontext_t);
         }
         unsafe {
-            let _fct = Box::new(fct_export);
-            makecontext(
-                &mut ctx as *mut ucontext_t,
-                mem::transmute::<unsafe extern "C" fn(), extern "C" fn()>(fct_export),
-                0,
-            );
+            makecontext(&mut ctx as *mut ucontext_t, algorithm, argc);
         }
         ctx
     }
@@ -79,13 +75,14 @@ impl Thread {
     ///assert!(vp.0[0].current == Thread::create_ctx());
     ///```
     pub fn swap_list(&mut self) {
-        let mut _idle = self.idle.lock().unwrap();
-        if !_idle.is_empty() {
-            self.ready = _idle.clone();
-            _idle.clear();
-            drop(_idle);
-        } else {
-            drop(_idle);
+        let mut is_emp = true;
+        if let Ok(_idle) = self.idle.lock() {
+            if !_idle.is_empty() {
+                is_emp = false;
+                self.ready = _idle.clone();
+            }
+        }
+        if is_emp {
             self.work_take();
         }
         self.ctx_yield();
@@ -138,10 +135,12 @@ impl Thread {
             let mut _vp = &VPROCESSORS.0;
             _vp.iter().for_each(|x| {
                 if self.id != x.id {
-                    let mut _next = x.idle.lock().unwrap().pop_front().unwrap();
-                    let mut _current = self.idle.lock().unwrap();
-                    _current.push_back(_next);
-                    drop(_current);
+                    if let Some(_next) = x.idle.lock().unwrap().pop_front() {
+                        let mut _current = self.idle.lock().unwrap();
+                        _current.push_back(_next);
+                        drop(_current);
+                        self.ctx_yield();
+                    }
                 }
             });
         }
@@ -173,18 +172,11 @@ impl Thread {
         _next = self.ready.pop_front();
 
         if let Some(next) = _next {
-            self.current = next;
             self.idle.lock().unwrap().push_back(_current);
+            self.current = next;
             self.swap_ctx(next);
         } else {
             self.swap_list();
         }
-
-        // if !_next {
-
-        // } else {
-        //     self.swap_ctx();
-        // }
-        // thread_swap(_, _);
     }
 }
