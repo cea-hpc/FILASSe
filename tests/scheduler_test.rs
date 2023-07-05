@@ -32,23 +32,6 @@ mod tests {
     }
 
     #[test]
-    fn add_to_queue() {
-        let mut sched = Scheduler::default();
-        sched.add_to_scheduler(&mut Job::default());
-        assert!(
-            sched.queue().get(0).unwrap()
-                == &Job {
-                    pid: 0,
-                    parent: 0,
-                    state: Ready {
-                        duration: 0,
-                        priority: 0
-                    }
-                }
-        );
-    }
-
-    #[test]
     fn add_to_scheduler() {
         let mut sched = Scheduler::default();
         sched.add_to_scheduler(&mut Job::default());
