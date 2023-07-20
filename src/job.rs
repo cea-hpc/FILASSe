@@ -32,7 +32,6 @@ pub struct Fifo {
 pub struct Shortest {
     /// number of processor
     virtual_processor: u32,
-    duration: u32,
 }
 
 type ProcessId = u64;
@@ -91,47 +90,55 @@ pub trait SchedulingAlgorithm {
     fn run(&self) -> Option<Task>;
 
     fn get_next_task() -> Option<Task> {
-        let mut task = JOB_QUEUE.lock().expect("Failed to take lock");
-        // task.pop_front()
-        None
+        if let Some(task) = JOB_QUEUE
+            .lock()
+            .expect("Failed to take lock")
+            .get_mut(&QueueKind::One)
+        {
+            task.pop_front()
+        } else {
+            None
+        }
     }
     fn push_task(task: Task) {
-        if let Task::New(id, run) = task {
-            if let Some(mut queue) = JOB_QUEUE.lock().unwrap().get_mut(&QueueKind::One) {
-                queue.push_back(Task::Ready(id, run));
+        if let Task::Ready(_, _) = task {
+            if let Some(queue) = JOB_QUEUE.lock().unwrap().get_mut(&QueueKind::One) {
+                queue.push_back(task);
             }
         }
     }
-    fn to_ready(&mut self) -> Option<Task> {
-        match Self::get_next_task() {
-            Some(Task::Running(id, run)) => Some(Task::Ready(id, run)),
-            Some(Task::Blocked(id, run)) => Some(Task::Ready(id, run)),
-            _ => None,
+    fn to_ready(&mut self, task: Task) -> Task {
+        match task {
+            Task::Running(id, run) => Task::Ready(id, run),
+            Task::Blocked(id, run) => Task::Ready(id, run),
+            _ => panic!("bad conversion to_ready"),
         }
     }
-    fn to_running(&mut self) -> Option<Task> {
-        match Self::get_next_task() {
-            Some(Task::Ready(id, run)) => Some(Task::Running(id, run)),
-            _ => None,
+    fn to_running(&mut self, task: Task) -> Task {
+        match task {
+            Task::Ready(id, run) => Task::Running(id, run),
+            _ => panic!("bad convertion to_running"),
         }
     }
-    fn to_blocked(&mut self) -> Task {
-        match Self::get_next_task() {
-            Some(Task::Running(id, run)) => Task::Blocked(id, run),
+    fn to_blocked(&mut self, task: Task) -> Task {
+        match task {
+            Task::Running(id, run) => Task::Blocked(id, run),
             _ => {
-                panic!("To_blocked")
+                panic!("bad convertion to_blocked")
             }
         }
     }
     /// change state from Task::running to Task::Zombie
-    fn to_zombie(&mut self) {
-        match Self::get_next_task() {
-            _ => {}
+    fn to_zombie(&mut self, task: Task) -> Task {
+        match task {
+            Task::Running(id, _) => Task::Zombie(id),
+            _ => panic!("Bad conversion"),
         }
     }
-    fn to_terminated(&mut self) {
-        match Self::get_next_task() {
-            _ => {}
+    fn to_terminated(&mut self, task: Task) -> Task {
+        match task {
+            Task::Running(id, _) => Task::Terminated(id),
+            _ => panic!("Bad conversion"),
         }
     }
 }
@@ -141,6 +148,7 @@ impl SchedulingAlgorithm for RoundRobin {
         queues.insert(QueueKind::Ready, VecDeque::new());
         queues.insert(QueueKind::Blocked, VecDeque::new());
     }
+
     fn run(&self) -> Option<Task> {
         let quantum = &self.quantum;
         // Yield after quantum time;
@@ -187,5 +195,16 @@ impl SchedulingAlgorithm for Fifo {
         } else {
             None
         }
+    }
+}
+
+impl SchedulingAlgorithm for Shortest {
+    fn init_queues(queues: &mut HashMap<QueueKind, VecDeque<Task>>) {
+        queues.insert(QueueKind::One, VecDeque::new());
+    }
+    fn run(&self) -> Option<Task> {
+        // Min(duration) is the next schedule
+        if let Some(Task::Ready(id, run)) = Self::get_next_task() {}
+        None
     }
 }
