@@ -16,9 +16,9 @@ use std::sync::Mutex;
 #[derive(Hash, Debug, Copy, Clone, Eq, PartialEq)]
 pub struct RoundRobin {
     /// number of processor
-    virtual_processor: u32,
+    pub virtual_processor: u32,
     /// execution time for each task before yield
-    quantum: u64,
+    pub quantum: u64,
 }
 
 #[derive(Hash, Debug, Copy, Clone, Eq, PartialEq)]
@@ -31,7 +31,7 @@ pub struct Fifo {
 #[derive(Hash, Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Shortest {
     /// number of processor
-    virtual_processor: u32,
+    pub virtual_processor: u32,
 }
 
 type ProcessId = u64;
@@ -86,8 +86,30 @@ pub static JOB_QUEUE: Mutex<Lazy<HashMap<QueueKind, VecDeque<Task>>>> =
 /// Trait that structs representing scheduling algorithms must implement
 pub trait SchedulingAlgorithm {
     /// Specialize how each scheduling algorithm initializes its queues
-    fn init_queues(queues: &mut HashMap<QueueKind, VecDeque<Task>>);
-    fn run(&self) -> Option<Task>;
+    fn init_queues(queues: &mut HashMap<QueueKind, VecDeque<Task>>) {
+        queues.insert(QueueKind::One, VecDeque::new());
+        queues.insert(QueueKind::Current, VecDeque::new());
+    }
+    fn run(&self);
+    fn fyield();
+    fn get_current() -> Option<Task> {
+        match JOB_QUEUE.lock() {
+            Ok(mut lock) => match lock.get_mut(&QueueKind::Current) {
+                Some(task) => task.pop_front(),
+                None => panic!("no task"),
+            },
+            Err(_) => panic!("Poisoned mutex"),
+        }
+    }
+    fn set_current(task: Option<Task>) {
+        if let Some(_task) = task {
+            if let Ok(mut lock) = JOB_QUEUE.lock() {
+                if let Some(queue) = lock.get_mut(&QueueKind::Current) {
+                    queue.push_front(_task);
+                }
+            }
+        }
+    }
 
     fn get_next_task() -> Option<Task> {
         if let Some(task) = JOB_QUEUE
@@ -101,9 +123,9 @@ pub trait SchedulingAlgorithm {
         }
     }
     fn push_task(task: Task) {
-        if let Task::Ready(_, _) = task {
+        if let Task::New(id, run) = task {
             if let Some(queue) = JOB_QUEUE.lock().unwrap().get_mut(&QueueKind::One) {
-                queue.push_back(task);
+                queue.push_back(Task::Ready(id, run));
             }
         }
     }
@@ -114,7 +136,7 @@ pub trait SchedulingAlgorithm {
             _ => panic!("bad conversion to_ready"),
         }
     }
-    fn to_running(&mut self, task: Task) -> Task {
+    fn to_running(task: Task) -> Task {
         match task {
             Task::Ready(id, run) => Task::Running(id, run),
             _ => panic!("bad convertion to_running"),
@@ -147,64 +169,143 @@ impl SchedulingAlgorithm for RoundRobin {
     fn init_queues(queues: &mut HashMap<QueueKind, VecDeque<Task>>) {
         queues.insert(QueueKind::Ready, VecDeque::new());
         queues.insert(QueueKind::Blocked, VecDeque::new());
+        queues.insert(QueueKind::Current, VecDeque::new());
     }
 
-    fn run(&self) -> Option<Task> {
-        let quantum = &self.quantum;
-        // Yield after quantum time;
-        if let Some(Task::Ready(id, run)) = Self::get_next_task() {
-            // Schedule task
-            // Some(Task::Running(id, run));
-            // End task || Yield || Blocked
-
-            // END
-            // Some(Task::Terminated(id));
-            // Yield
-            // yield()
-            // push_task(Task::Ready(id, run));
-
-            // blocked
-            // push_task(Task::Blocked(id, run));
-            None
+    fn get_next_task() -> Option<Task> {
+        if let Some(task) = JOB_QUEUE
+            .lock()
+            .expect("Failed to take lock")
+            .get_mut(&QueueKind::Ready)
+        {
+            task.pop_front()
         } else {
             None
+        }
+    }
+    fn push_task(task: Task) {
+        if let Task::New(id, run) = task {
+            if let Some(queue) = JOB_QUEUE.lock().unwrap().get_mut(&QueueKind::Ready) {
+                queue.push_back(Task::Ready(id, run));
+            }
+        }
+    }
+    fn fyield() {}
+    fn run(&self) {
+        // Yield after quantum time;
+        let _quantum = &self.quantum;
+        if let Some(Task::Running(_, run)) = Self::get_current() {
+            (run.function)();
+            if let Some(next_task) = Self::get_next_task() {
+                // Schedule task
+                // Set current / run the new context
+                Self::set_current(Some(Self::to_running(next_task)));
+                // Some(Task::Running(id, run));
+                // End task || Yield || Blocked
+
+                // END
+                // Some(Task::Terminated(id));
+                // Yieldmut
+                // yield()
+                // push_task(Task::Ready(id, run));
+
+                // blocked
+                // push_task(Task::Blocked(id, run));
+                self.run();
+            }
+        } else {
+            // Set current / run the new context
+            if let Some(next) = Self::get_next_task() {
+                Self::set_current(Some(Self::to_running(next)));
+            }
+
+            self.run();
         }
     }
 }
 
 impl SchedulingAlgorithm for Fifo {
-    fn init_queues(queues: &mut HashMap<QueueKind, VecDeque<Task>>) {
-        // insert necessary queues for a FIFO scheduling algorithm...
-        queues.insert(QueueKind::One, VecDeque::new());
-    }
-    fn run(&self) -> Option<Task> {
-        if let Some(Task::Ready(id, run)) = Self::get_next_task() {
-            // Schedule task
-            // Some(Task::Running(id, run));
-            // End task || Yield || Blocked
+    /// Yield for preempt after q time
+    fn fyield() {}
+    fn run(&self) {
+        if let Some(Task::Running(_, run)) = Self::get_current() {
+            (run.function)();
+            if let Some(next_task) = Self::get_next_task() {
+                // Schedule task
+                // Set current / run the new context
+                Self::set_current(Some(Self::to_running(next_task)));
+                // Some(Task::Running(id, run));
+                // End task || Yield || Blocked
 
-            // END
-            // Some(Task::Terminated(id));
-            // Yield
-            // yield()
-            // push_task(Task::Ready(id, run));
+                // END
+                // Some(Task::Terminated(id));
+                // Yieldmut
+                // yield()
+                // push_task(Task::Ready(id, run));
 
-            // blocked
-            // push_task(Task::Blocked(id, run));
-            None
+                // blocked
+                // push_task(Task::Blocked(id, run));
+                self.run();
+            }
         } else {
-            None
+            // Set current / run the new context
+            if let Some(next) = Self::get_next_task() {
+                Self::set_current(Some(Self::to_running(next)));
+            }
+
+            self.run();
         }
     }
 }
 
 impl SchedulingAlgorithm for Shortest {
-    fn init_queues(queues: &mut HashMap<QueueKind, VecDeque<Task>>) {
-        queues.insert(QueueKind::One, VecDeque::new());
+    fn fyield() {}
+    fn get_next_task() -> Option<Task> {
+        if let Some(task) = JOB_QUEUE
+            .lock()
+            .expect("Failed to take lock")
+            .get_mut(&QueueKind::One)
+        {
+            if let Some(idx) = task.iter().enumerate().min_by_key(|(_, x)| match x {
+                Task::Ready(_, a) => a.duration,
+                _ => 2000,
+            }) {
+                task.remove(idx.0)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
-    fn run(&self) -> Option<Task> {
+    fn run(&self) {
         // Min(duration) is the next schedule
-        if let Some(Task::Ready(id, run)) = Self::get_next_task() {}
-        None
+        if let Some(Task::Running(_, run)) = Self::get_current() {
+            (run.function)();
+            if let Some(next_task) = Self::get_next_task() {
+                // Schedule task
+                // Set current / run the new context
+                Self::set_current(Some(Self::to_running(next_task)));
+                // Some(Task::Running(id, run));
+                // End task || Yield || Blocked
+
+                // END
+                // Some(Task::Terminated(id));
+                // Yield
+                // yield()
+                // push_task(Task::Ready(id, run));
+
+                // blocked
+                // push_task(Task::Blocked(id, run));
+                self.run();
+            }
+        } else {
+            // Set current / run the new context
+            if let Some(next) = Self::get_next_task() {
+                Self::set_current(Some(Self::to_running(next)));
+            }
+
+            self.run();
+        }
     }
 }
