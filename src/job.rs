@@ -1,25 +1,7 @@
+use crossbeam_utils::thread;
 use once_cell::sync::Lazy;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
-
-// #[derive(Hash, Debug, Copy, Clone, Eq, PartialEq)]
-// /// Possible algorithms
-// pub enum Scheduler {
-//     /// Fifo, First in first out, Coopérative algorithm
-//     Fifo,
-//     /// Round Robin, preemptive algorithm
-//     Roundrobin,
-//     /// Shortest Job Next, duration algorithm
-//     Shortest,
-// }
-
-#[derive(Hash, Debug, Copy, Clone, Eq, PartialEq)]
-pub struct RoundRobin {
-    /// number of processor
-    pub virtual_processor: u32,
-    /// execution time for each task before yield
-    pub quantum: u64,
-}
 
 #[derive(Hash, Debug, Copy, Clone, Eq, PartialEq)]
 /// E.g. struct for the FIFO scheduling algorithm
@@ -29,9 +11,41 @@ pub struct Fifo {
 }
 
 #[derive(Hash, Debug, Copy, Clone, Eq, PartialEq)]
-pub struct Shortest {
-    /// number of processor
-    pub virtual_processor: u32,
+pub struct Thread {
+    pub counter: u64,
+    pub task: Task,
+}
+
+pub trait ThreadTrait {
+    fn call_scheduler(&mut self);
+    fn create(&mut self);
+    fn exit(&mut self);
+}
+
+impl ThreadTrait for Thread {
+    fn call_scheduler(&mut self) {
+        self.counter += 1;
+    }
+    fn create(&mut self) {
+        thread::scope(|s| {
+            s.spawn(|_| {
+                if let Task::Ready(id, _) = self.task {
+                    dbg!(id.id);
+                }
+            });
+        })
+        .unwrap();
+        self.exit()
+    }
+    fn exit(&mut self) {
+        // SchedulingAlgorithm::get_next_task();
+        //call scheduler
+        //return values
+        self.call_scheduler();
+        dbg!(self);
+        Fifo::run();
+        //get next task
+    }
 }
 
 type ProcessId = u64;
@@ -80,19 +94,19 @@ pub enum QueueKind {
     Current,
 }
 
-pub static JOB_QUEUE: Mutex<Lazy<HashMap<QueueKind, VecDeque<Task>>>> =
+pub static JOB_QUEUE: Mutex<Lazy<HashMap<QueueKind, VecDeque<Thread>>>> =
     Mutex::new(Lazy::new(|| HashMap::new()));
 
 /// Trait that structs representing scheduling algorithms must implement
 pub trait SchedulingAlgorithm {
     /// Specialize how each scheduling algorithm initializes its queues
-    fn init_queues(queues: &mut HashMap<QueueKind, VecDeque<Task>>) {
+    fn init_queues(queues: &mut HashMap<QueueKind, VecDeque<Thread>>) {
         queues.insert(QueueKind::One, VecDeque::new());
         queues.insert(QueueKind::Current, VecDeque::new());
     }
-    fn run(&self);
-    fn fyield();
-    fn get_current() -> Option<Task> {
+    fn create(job: Task);
+    fn run();
+    fn get_current() -> Option<Thread> {
         match JOB_QUEUE.lock() {
             Ok(mut lock) => match lock.get_mut(&QueueKind::Current) {
                 Some(task) => task.pop_front(),
@@ -101,7 +115,8 @@ pub trait SchedulingAlgorithm {
             Err(_) => panic!("Poisoned mutex"),
         }
     }
-    fn set_current(task: Option<Task>) {
+
+    fn set_current(task: Option<Thread>) {
         if let Some(_task) = task {
             if let Ok(mut lock) = JOB_QUEUE.lock() {
                 if let Some(queue) = lock.get_mut(&QueueKind::Current) {
@@ -111,7 +126,7 @@ pub trait SchedulingAlgorithm {
         }
     }
 
-    fn get_next_task() -> Option<Task> {
+    fn get_next_task() -> Option<Thread> {
         if let Some(task) = JOB_QUEUE
             .lock()
             .expect("Failed to take lock")
@@ -122,11 +137,10 @@ pub trait SchedulingAlgorithm {
             None
         }
     }
-    fn push_task(task: Task) {
-        if let Task::New(id, run) = task {
-            if let Some(queue) = JOB_QUEUE.lock().unwrap().get_mut(&QueueKind::One) {
-                queue.push_back(Task::Ready(id, run));
-            }
+
+    fn push_task(task: Thread) {
+        if let Some(queue) = JOB_QUEUE.lock().unwrap().get_mut(&QueueKind::One) {
+            queue.push_back(task);
         }
     }
     fn to_ready(&mut self, task: Task) -> Task {
@@ -165,44 +179,27 @@ pub trait SchedulingAlgorithm {
     }
 }
 
-impl SchedulingAlgorithm for RoundRobin {
-    fn init_queues(queues: &mut HashMap<QueueKind, VecDeque<Task>>) {
-        queues.insert(QueueKind::Ready, VecDeque::new());
-        queues.insert(QueueKind::Blocked, VecDeque::new());
-        queues.insert(QueueKind::Current, VecDeque::new());
+impl SchedulingAlgorithm for Fifo {
+    fn create(task: Task) {
+        if let Task::New(a, b) = task {
+            Fifo::push_task(Thread {
+                counter: 0,
+                task: Task::Ready(a, b),
+            });
+        }
     }
 
-    fn get_next_task() -> Option<Task> {
-        if let Some(task) = JOB_QUEUE
-            .lock()
-            .expect("Failed to take lock")
-            .get_mut(&QueueKind::Ready)
-        {
-            task.pop_front()
-        } else {
-            None
-        }
-    }
-    fn push_task(task: Task) {
-        if let Task::New(id, run) = task {
-            if let Some(queue) = JOB_QUEUE.lock().unwrap().get_mut(&QueueKind::Ready) {
-                queue.push_back(Task::Ready(id, run));
-            }
-        }
-    }
-    fn fyield() {}
-    fn run(&self) {
-        // Yield after quantum time;
-        let _quantum = &self.quantum;
-        if let Some(Task::Running(_, run)) = Self::get_current() {
-            (run.function)();
-            if let Some(next_task) = Self::get_next_task() {
+    /// Yield for preempt after q time
+    fn run() {
+        if let Some(_task) = Self::get_current() {
+            // (run.function)();
+            if let Some(mut next_task) = Self::get_next_task() {
                 // Schedule task
                 // Set current / run the new context
-                Self::set_current(Some(Self::to_running(next_task)));
-                // Some(Task::Running(id, run));
+                Self::set_current(Some(next_task));
                 // End task || Yield || Blocked
 
+                next_task.create();
                 // END
                 // Some(Task::Terminated(id));
                 // Yieldmut
@@ -211,62 +208,43 @@ impl SchedulingAlgorithm for RoundRobin {
 
                 // blocked
                 // push_task(Task::Blocked(id, run));
-                self.run();
+                // self.run();
             }
         } else {
             // Set current / run the new context
-            if let Some(next) = Self::get_next_task() {
-                Self::set_current(Some(Self::to_running(next)));
+            if let Some(mut next) = Self::get_next_task() {
+                Self::set_current(Some(next));
+                next.create();
             }
 
-            self.run();
+            // self.run();
         }
     }
 }
 
-impl SchedulingAlgorithm for Fifo {
-    /// Yield for preempt after q time
-    fn fyield() {}
-    fn run(&self) {
-        if let Some(Task::Running(_, run)) = Self::get_current() {
-            (run.function)();
-            if let Some(next_task) = Self::get_next_task() {
-                // Schedule task
-                // Set current / run the new context
-                Self::set_current(Some(Self::to_running(next_task)));
-                // Some(Task::Running(id, run));
-                // End task || Yield || Blocked
-
-                // END
-                // Some(Task::Terminated(id));
-                // Yieldmut
-                // yield()
-                // push_task(Task::Ready(id, run));
-
-                // blocked
-                // push_task(Task::Blocked(id, run));
-                self.run();
-            }
-        } else {
-            // Set current / run the new context
-            if let Some(next) = Self::get_next_task() {
-                Self::set_current(Some(Self::to_running(next)));
-            }
-
-            self.run();
-        }
-    }
+#[derive(Hash, Debug, Copy, Clone, Eq, PartialEq)]
+pub struct Shortest {
+    /// number of processor
+    pub virtual_processor: u32,
 }
 
 impl SchedulingAlgorithm for Shortest {
-    fn fyield() {}
-    fn get_next_task() -> Option<Task> {
+    fn create(task: Task) {
+        if let Task::New(a, b) = task {
+            Fifo::push_task(Thread {
+                counter: 0,
+                task: Task::Ready(a, b),
+            });
+        }
+    }
+
+    fn get_next_task() -> Option<Thread> {
         if let Some(task) = JOB_QUEUE
             .lock()
             .expect("Failed to take lock")
             .get_mut(&QueueKind::One)
         {
-            if let Some(idx) = task.iter().enumerate().min_by_key(|(_, x)| match x {
+            if let Some(idx) = task.iter().enumerate().min_by_key(|(_, x)| match x.task {
                 Task::Ready(_, a) => a.duration,
                 _ => 2000,
             }) {
@@ -278,14 +256,14 @@ impl SchedulingAlgorithm for Shortest {
             None
         }
     }
-    fn run(&self) {
+    fn run() {
         // Min(duration) is the next schedule
-        if let Some(Task::Running(_, run)) = Self::get_current() {
-            (run.function)();
-            if let Some(next_task) = Self::get_next_task() {
+        if let Some(_task) = Self::get_current() {
+            // (run.function)();
+            if let Some(mut next_task) = Self::get_next_task() {
                 // Schedule task
                 // Set current / run the new context
-                Self::set_current(Some(Self::to_running(next_task)));
+                Self::set_current(Some(next_task));
                 // Some(Task::Running(id, run));
                 // End task || Yield || Blocked
 
@@ -297,15 +275,17 @@ impl SchedulingAlgorithm for Shortest {
 
                 // blocked
                 // push_task(Task::Blocked(id, run));
-                self.run();
+                // self.run();
+                next_task.create();
             }
         } else {
             // Set current / run the new context
-            if let Some(next) = Self::get_next_task() {
-                Self::set_current(Some(Self::to_running(next)));
+            if let Some(mut next) = Self::get_next_task() {
+                Self::set_current(Some(next));
+                next.create();
             }
 
-            self.run();
+            // self.run();
         }
     }
 }
