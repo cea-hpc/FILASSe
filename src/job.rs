@@ -19,15 +19,15 @@ pub struct Thread {
 
 pub trait ThreadTrait {
     fn work(&mut self);
-    fn create(&mut self, sched: &mut Box<dyn SchedulingAlgorithm>);
-    fn exit(&mut self, sched: &mut Box<dyn SchedulingAlgorithm>);
+    fn create(&mut self, sched: &mut dyn SchedulingAlgorithm);
+    fn exit(&mut self, sched: &mut dyn SchedulingAlgorithm);
 }
 
 impl ThreadTrait for Thread {
     fn work(&mut self) {
         self.counter += 1;
     }
-    fn create(&mut self, _sched: &mut Box<dyn SchedulingAlgorithm>) {
+    fn create(&mut self, _sched: &mut dyn SchedulingAlgorithm) {
         thread::scope(|s| {
             s.spawn(|_| {
                 if let Task::Ready(id, run) = self.task {
@@ -47,7 +47,7 @@ impl ThreadTrait for Thread {
         }
         self.exit(_sched)
     }
-    fn exit(&mut self, sched: &mut Box<dyn SchedulingAlgorithm>) {
+    fn exit(&mut self, sched: &mut dyn SchedulingAlgorithm) {
         if let Task::Running(id, _) = self.task {
             self.task = Task::Terminated(id);
             self.work();
@@ -248,7 +248,7 @@ impl SchedulingAlgorithm for Fifo {
                 self.set_current(Some(next_task));
                 // End task || Yield || Blocked
 
-                next_task.create(&mut Box::new(self));
+                next_task.create(&mut self as &mut dyn SchedulingAlgorithm);
                 // END
                 // Some(Task::Terminated(id));
                 // Yieldmut
