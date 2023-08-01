@@ -3,10 +3,11 @@ use once_cell::sync::Lazy;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
-#[derive(Hash, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug)]
 /// E.g. struct for the FIFO scheduling algorithm
 pub struct Fifo {
     /// number of processor
+    pub queue: Mutex<Lazy<HashMap<QueueKind, VecDeque<Thread>>>>,
     pub virtual_processor: u32,
 }
 
@@ -17,33 +18,47 @@ pub struct Thread {
 }
 
 pub trait ThreadTrait {
-    fn call_scheduler(&mut self);
-    fn create(&mut self);
-    fn exit(&mut self);
+    fn work(&mut self);
+    fn create(&mut self, sched: &mut Box<dyn SchedulingAlgorithm>);
+    fn exit(&mut self, sched: &mut Box<dyn SchedulingAlgorithm>);
 }
 
 impl ThreadTrait for Thread {
-    fn call_scheduler(&mut self) {
+    fn work(&mut self) {
         self.counter += 1;
     }
-    fn create(&mut self) {
+    fn create(&mut self, _sched: &mut Box<dyn SchedulingAlgorithm>) {
         thread::scope(|s| {
             s.spawn(|_| {
-                if let Task::Ready(id, _) = self.task {
+                if let Task::Ready(id, run) = self.task {
+                    self.task = Task::Running(id, run);
                     dbg!(id.id);
                 }
             });
         })
         .unwrap();
-        self.exit()
+        if self.counter < 10 {
+            // Not working
+            let backoff = crossbeam_utils::Backoff::new();
+            while !backoff.is_completed() {
+                backoff.snooze();
+            }
+            self.counter += 1;
+        }
+        self.exit(_sched)
     }
-    fn exit(&mut self) {
+    fn exit(&mut self, sched: &mut Box<dyn SchedulingAlgorithm>) {
+        if let Task::Running(id, _) = self.task {
+            self.task = Task::Terminated(id);
+            self.work();
+            dbg!(self);
+            sched.run();
+        } else {
+            panic!("task not running");
+        }
         // SchedulingAlgorithm::get_next_task();
         //call scheduler
         //return values
-        self.call_scheduler();
-        dbg!(self);
-        Fifo::run();
         //get next task
     }
 }
@@ -100,49 +115,27 @@ pub static JOB_QUEUE: Mutex<Lazy<HashMap<QueueKind, VecDeque<Thread>>>> =
 /// Trait that structs representing scheduling algorithms must implement
 pub trait SchedulingAlgorithm {
     /// Specialize how each scheduling algorithm initializes its queues
-    fn init_queues(queues: &mut HashMap<QueueKind, VecDeque<Thread>>) {
+    fn new() -> Self
+    where
+        Self: Sized;
+    fn init_queues(queues: &mut HashMap<QueueKind, VecDeque<Thread>>)
+    where
+        Self: Sized,
+    {
         queues.insert(QueueKind::One, VecDeque::new());
         queues.insert(QueueKind::Current, VecDeque::new());
     }
-    fn create(job: Task);
-    fn run();
-    fn get_current() -> Option<Thread> {
-        match JOB_QUEUE.lock() {
-            Ok(mut lock) => match lock.get_mut(&QueueKind::Current) {
-                Some(task) => task.pop_front(),
-                None => panic!("no task"),
-            },
-            Err(_) => panic!("Poisoned mutex"),
-        }
-    }
+    fn create(&mut self, job: Task)
+    where
+        Self: Sized;
+    fn run(&mut self);
+    fn get_current(&mut self) -> Option<Thread>;
 
-    fn set_current(task: Option<Thread>) {
-        if let Some(_task) = task {
-            if let Ok(mut lock) = JOB_QUEUE.lock() {
-                if let Some(queue) = lock.get_mut(&QueueKind::Current) {
-                    queue.push_front(_task);
-                }
-            }
-        }
-    }
+    fn set_current(&mut self, task: Option<Thread>);
 
-    fn get_next_task() -> Option<Thread> {
-        if let Some(task) = JOB_QUEUE
-            .lock()
-            .expect("Failed to take lock")
-            .get_mut(&QueueKind::One)
-        {
-            task.pop_front()
-        } else {
-            None
-        }
-    }
+    fn get_next_task(&mut self) -> Option<Thread>;
 
-    fn push_task(task: Thread) {
-        if let Some(queue) = JOB_QUEUE.lock().unwrap().get_mut(&QueueKind::One) {
-            queue.push_back(task);
-        }
-    }
+    fn push_task(&mut self, task: Thread);
     fn to_ready(&mut self, task: Task) -> Task {
         match task {
             Task::Running(id, run) => Task::Ready(id, run),
@@ -150,7 +143,10 @@ pub trait SchedulingAlgorithm {
             _ => panic!("bad conversion to_ready"),
         }
     }
-    fn to_running(task: Task) -> Task {
+    fn to_running(task: Task) -> Task
+    where
+        Self: Sized,
+    {
         match task {
             Task::Ready(id, run) => Task::Running(id, run),
             _ => panic!("bad convertion to_running"),
@@ -180,26 +176,79 @@ pub trait SchedulingAlgorithm {
 }
 
 impl SchedulingAlgorithm for Fifo {
-    fn create(task: Task) {
+    fn new() -> Self {
+        let fifo = Self {
+            virtual_processor: 2,
+            queue: Mutex::new(Lazy::new(|| HashMap::new())),
+        };
+        fifo.queue
+            .lock()
+            .unwrap()
+            .insert(QueueKind::One, VecDeque::new());
+        fifo.queue
+            .lock()
+            .unwrap()
+            .insert(QueueKind::Current, VecDeque::new());
+        fifo
+    }
+    fn set_current(&mut self, task: Option<Thread>) {
+        if let Some(_task) = task {
+            if let Ok(mut lock) = self.queue.lock() {
+                if let Some(queue) = lock.get_mut(&QueueKind::Current) {
+                    queue.push_front(_task);
+                }
+            }
+        }
+    }
+    fn push_task(&mut self, task: Thread)
+    where
+        Self: Sized,
+    {
+        if let Some(queue) = self.queue.lock().unwrap().get_mut(&QueueKind::One) {
+            queue.push_back(task);
+        }
+    }
+    fn get_current(&mut self) -> Option<Thread> {
+        match self.queue.lock() {
+            Ok(mut lock) => match lock.get_mut(&QueueKind::Current) {
+                Some(task) => task.pop_front(),
+                None => panic!("no task"),
+            },
+            Err(_) => panic!("Poisoned mutex"),
+        }
+    }
+    fn create(&mut self, task: Task) {
         if let Task::New(a, b) = task {
-            Fifo::push_task(Thread {
+            self.push_task(Thread {
                 counter: 0,
                 task: Task::Ready(a, b),
             });
         }
     }
 
+    fn get_next_task(&mut self) -> Option<Thread> {
+        if let Some(task) = self
+            .queue
+            .lock()
+            .expect("Failed to take lock")
+            .get_mut(&QueueKind::One)
+        {
+            task.pop_front()
+        } else {
+            None
+        }
+    }
     /// Yield for preempt after q time
-    fn run() {
-        if let Some(_task) = Self::get_current() {
+    fn run(&mut self) {
+        if let Some(_task) = self.get_current() {
             // (run.function)();
-            if let Some(mut next_task) = Self::get_next_task() {
+            if let Some(mut next_task) = self.get_next_task() {
                 // Schedule task
                 // Set current / run the new context
-                Self::set_current(Some(next_task));
+                self.set_current(Some(next_task));
                 // End task || Yield || Blocked
 
-                next_task.create();
+                next_task.create(&mut Box::new(self));
                 // END
                 // Some(Task::Terminated(id));
                 // Yieldmut
@@ -212,9 +261,9 @@ impl SchedulingAlgorithm for Fifo {
             }
         } else {
             // Set current / run the new context
-            if let Some(mut next) = Self::get_next_task() {
-                Self::set_current(Some(next));
-                next.create();
+            if let Some(mut next) = self.get_next_task() {
+                self.set_current(Some(next));
+                // next.create();
             }
 
             // self.run();
@@ -222,24 +271,67 @@ impl SchedulingAlgorithm for Fifo {
     }
 }
 
-#[derive(Hash, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct Shortest {
     /// number of processor
     pub virtual_processor: u32,
+    pub queue: Mutex<Lazy<HashMap<QueueKind, VecDeque<Thread>>>>,
 }
 
 impl SchedulingAlgorithm for Shortest {
-    fn create(task: Task) {
+    fn set_current(&mut self, task: Option<Thread>) {
+        if let Some(_task) = task {
+            if let Ok(mut lock) = self.queue.lock() {
+                if let Some(queue) = lock.get_mut(&QueueKind::Current) {
+                    queue.push_front(_task);
+                }
+            }
+        }
+    }
+    fn new() -> Self {
+        let fifo = Self {
+            virtual_processor: 2,
+            queue: Mutex::new(Lazy::new(|| HashMap::new())),
+        };
+        fifo.queue
+            .lock()
+            .unwrap()
+            .insert(QueueKind::One, VecDeque::new());
+        fifo.queue
+            .lock()
+            .unwrap()
+            .insert(QueueKind::Current, VecDeque::new());
+        fifo
+    }
+    fn create(&mut self, task: Task) {
         if let Task::New(a, b) = task {
-            Fifo::push_task(Thread {
+            self.push_task(Thread {
                 counter: 0,
                 task: Task::Ready(a, b),
             });
         }
     }
 
-    fn get_next_task() -> Option<Thread> {
-        if let Some(task) = JOB_QUEUE
+    fn get_current(&mut self) -> Option<Thread> {
+        match self.queue.lock() {
+            Ok(mut lock) => match lock.get_mut(&QueueKind::Current) {
+                Some(task) => task.pop_front(),
+                None => panic!("no task"),
+            },
+            Err(_) => panic!("Poisoned mutex"),
+        }
+    }
+    fn push_task(&mut self, task: Thread)
+    where
+        Self: Sized,
+    {
+        if let Some(queue) = self.queue.lock().unwrap().get_mut(&QueueKind::One) {
+            queue.push_back(task);
+        }
+    }
+    fn get_next_task(&mut self) -> Option<Thread> {
+        if let Some(task) = self
+            .queue
             .lock()
             .expect("Failed to take lock")
             .get_mut(&QueueKind::One)
@@ -256,14 +348,14 @@ impl SchedulingAlgorithm for Shortest {
             None
         }
     }
-    fn run() {
+    fn run(&mut self) {
         // Min(duration) is the next schedule
-        if let Some(_task) = Self::get_current() {
+        if let Some(_task) = self.get_current() {
             // (run.function)();
-            if let Some(mut next_task) = Self::get_next_task() {
+            if let Some(mut next_task) = self.get_next_task() {
                 // Schedule task
                 // Set current / run the new context
-                Self::set_current(Some(next_task));
+                self.set_current(Some(next_task));
                 // Some(Task::Running(id, run));
                 // End task || Yield || Blocked
 
@@ -276,13 +368,13 @@ impl SchedulingAlgorithm for Shortest {
                 // blocked
                 // push_task(Task::Blocked(id, run));
                 // self.run();
-                next_task.create();
+                // next_task.create();
             }
         } else {
             // Set current / run the new context
-            if let Some(mut next) = Self::get_next_task() {
-                Self::set_current(Some(next));
-                next.create();
+            if let Some(mut next) = self.get_next_task() {
+                self.set_current(Some(next));
+                // next.create();
             }
 
             // self.run();
