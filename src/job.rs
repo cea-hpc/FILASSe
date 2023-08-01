@@ -248,7 +248,7 @@ impl SchedulingAlgorithm for Fifo {
                 self.set_current(Some(next_task));
                 // End task || Yield || Blocked
 
-                next_task.create(&mut self as &mut dyn SchedulingAlgorithm);
+                next_task.create(self);
                 // END
                 // Some(Task::Terminated(id));
                 // Yieldmut
@@ -263,7 +263,7 @@ impl SchedulingAlgorithm for Fifo {
             // Set current / run the new context
             if let Some(mut next) = self.get_next_task() {
                 self.set_current(Some(next));
-                // next.create();
+                next.create(self);
             }
 
             // self.run();
@@ -358,6 +358,7 @@ impl SchedulingAlgorithm for Shortest {
                 self.set_current(Some(next_task));
                 // Some(Task::Running(id, run));
                 // End task || Yield || Blocked
+                next_task.create(self);
 
                 // END
                 // Some(Task::Terminated(id));
@@ -374,7 +375,7 @@ impl SchedulingAlgorithm for Shortest {
             // Set current / run the new context
             if let Some(mut next) = self.get_next_task() {
                 self.set_current(Some(next));
-                // next.create();
+                next.create(self);
             }
 
             // self.run();
