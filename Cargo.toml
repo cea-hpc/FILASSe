@@ -6,4 +6,5 @@ edition = "2021"
 [dependencies]
 crossbeam = "0.8.2"
 crossbeam-utils = "0.8.16"
+nix = "0.26.2"
 once_cell = "1.18.0"
