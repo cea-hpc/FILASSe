@@ -1,7 +1,7 @@
 use nix::libc;
 use std::{
     collections::VecDeque,
-    mem::{transmute, transmute_copy},
+    mem::{self, transmute, transmute_copy},
     sync::Mutex,
 };
 
@@ -126,18 +126,35 @@ impl Scheduler {
         fn mkctx(func: *const u8) {
             let ptr: *const *const dyn Fn() = func as *const _;
             let fatptr: *const dyn Fn() = unsafe { *ptr };
+            dbg!("DEBUG");
             unsafe { (*fatptr)() }
         }
-        let mut context: libc::ucontext_t = std::mem::zeroed();
+        const STACK_SIZE: usize = 4096;
+        libc::malloc(mem::size_of::<usize>());
+        let mut stack = Vec::new();
+        stack.reserve(STACK_SIZE);
+        let mut context: libc::ucontext_t = mem::zeroed();
+
         libc::getcontext(&mut context);
+        context.uc_stack = libc::stack_t {
+            ss_sp: stack.as_mut_ptr() as *mut libc::c_void,
+            ss_flags: 0,
+            ss_size: STACK_SIZE,
+        };
         let fatptr: *const dyn Fn() = Box::leak(Box::new(func)) as *const _;
         let ptr: *const *const dyn Fn() = Box::leak(Box::new(fatptr)) as *const _;
         // Self::mkctx(ptr as *const _);
-        libc::makecontext(&mut context, transmute_copy(&mkctx), 1, ptr);
+        libc::makecontext(
+            &mut context,
+            transmute::<fn(*const u8), extern "C" fn()>(mkctx),
+            1,
+            ptr,
+        );
     }
 
     unsafe fn set_context(&self, func: impl Fn()) -> libc::ucontext_t {
-        let mut context: libc::ucontext_t = std::mem::zeroed();
+        let mut context: libc::ucontext_t = std::mem::uninitialized();
+        libc::getcontext(&mut context);
         // libc::getcontext(&mut context);
         // libc::makecontext(&mut context, transmute::<_, extern "C" fn()>(func), 0);
         Self::leaker(func);
