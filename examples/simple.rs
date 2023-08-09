@@ -1,16 +1,20 @@
 use nix::libc;
 use std::{
     collections::VecDeque,
-    mem::{self, transmute, transmute_copy},
+    mem::{self, transmute},
     sync::Mutex,
 };
 
+// TODO change stack size to allow default system stack size
+const STACK_SIZE: usize = 40960;
 /// Dummy struct for Scheduler
 /// Even not enough to properly run a real theaded program as a task queue should be necessary
+#[derive(Debug)]
 struct Scheduler {
     queue: Mutex<VecDeque<Task>>,
     algorithm: Fifo,
-    current: Option<Task>,
+    current: Mutex<Option<Task>>,
+    idle: Mutex<Option<libc::ucontext_t>>,
 }
 
 trait Algorithm {
@@ -18,12 +22,13 @@ trait Algorithm {
     fn add_to_queue(&self, queue: &Mutex<VecDeque<Task>>, task: Task);
 }
 
+#[derive(Debug)]
 struct Fifo {}
 impl Algorithm for Fifo {
     fn add_to_queue(&self, queue: &Mutex<VecDeque<Task>>, task: Task) {
-        if let Task::New(job) = task {
-            queue.lock().unwrap().push_back(Task::Ready(job));
-        }
+        // if let Task::New(job) = task {
+        queue.lock().unwrap().push_back(task);
+        // }
     }
     fn get_next_task(&self, queue: &Mutex<VecDeque<Task>>) -> Option<Task> {
         let mut guard = queue.lock().unwrap();
@@ -31,14 +36,17 @@ impl Algorithm for Fifo {
     }
 }
 
+#[derive(Debug)]
 pub struct SchedulerUser {
     scheduler: Scheduler,
 }
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Job {
-    // func: Box<dyn Fn() -> ()>,
+    parent: Option<libc::ucontext_t>,
     context: libc::ucontext_t,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Task {
     /// Creation State
     New(Job),
@@ -55,10 +63,12 @@ enum Task {
 }
 
 impl SchedulerUser {
-    pub fn create_task<F: Fn() -> () + 'static>(&self, func: F) {
-        unsafe {
-            self.scheduler.create_task(func);
-        }
+    pub fn create_task<F: Fn() -> ()>(&self, func: F) {
+        self.scheduler.create_task(func);
+    }
+
+    pub fn join(&self) {
+        self.yield_task();
     }
 
     pub fn yield_task(&self) {
@@ -79,42 +89,78 @@ impl Scheduler {
         eprintln!("Task created");
         // Should only register the task, not run it.
         // When add to queue
-        unsafe {
-            self.algorithm.add_to_queue(
-                &self.queue,
-                Task::New(Job {
-                    // func: Box::new(my_func),
-                    context: self.set_context(func),
-                }),
-            );
-        }
-        self.yield_task();
-    }
+        let lock = *self.current.lock().unwrap();
+        if let Some(Task::Ready(job)) = lock {
+            unsafe {
+                self.algorithm.add_to_queue(
+                    &self.queue,
+                    Task::Ready(Job {
+                        context: self.set_context(func),
+                        parent: Some(job.context),
+                    }),
+                );
+            }
+        } else {
+            drop(lock);
+            let mut context;
+            unsafe {
+                let mut stack = Vec::<u8>::new();
+                stack.reserve(STACK_SIZE);
+                context = mem::zeroed();
 
+                libc::getcontext(&mut context);
+                context.uc_stack = libc::stack_t {
+                    ss_sp: stack.as_mut_ptr() as *mut libc::c_void,
+                    ss_flags: 0,
+                    ss_size: STACK_SIZE,
+                };
+            }
+            self.idle.lock().unwrap().get_or_insert(context);
+            self.current.lock().unwrap().get_or_insert(Task::Ready(Job {
+                parent: None,
+                context,
+            }));
+            unsafe {
+                self.algorithm.add_to_queue(
+                    &self.queue,
+                    Task::Ready(Job {
+                        context: self.set_context(func),
+                        parent: Some(context),
+                    }),
+                );
+            }
+        }
+    }
     /// Run a given task. Not to be called directly by end-user.
-    fn run_task(&self, job: Job) {
-        // self.swap_context();
+    fn run_task(&self) {
         self.destroy_task();
     }
 
     /// Yield: go back to scheduler to run one of the ready tasks.
     fn yield_task(&self) {
         eprintln!("Calling yield");
+        std::thread::sleep(std::time::Duration::from_secs(1));
         // check if current, yes = running task -> ready ELSE ready/new to running
-        // if let Some(task) = &self.current {
-        //     self.algorithm.add_to_queue(&self.queue, *task);
-        // }
-        if let Some(_retrun) = self.algorithm.get_next_task(&self.queue) {
-            if let Task::Ready(job) = _retrun {
-                self.run_task(job);
-                unsafe {
-                    // self.swap_context(&mut current, &mut job.context);
+
+        let current = *self.current.lock().unwrap();
+        let next = self.algorithm.get_next_task(&self.queue);
+
+        if let Some(Task::Ready(mut _next)) = next {
+            if let Some(Task::Ready(mut _current)) = current {
+                if !_current.eq(&_next) {
+                    self.algorithm.add_to_queue(&self.queue, current.unwrap());
+                    unsafe { self.swap_context(&mut _current.context, &mut _next.context) }
                 }
-            } else {
-                eprintln!("Task is not ready");
             }
         } else {
-            eprintln!("Nothing to do, returning to previous execution");
+            // dbg!("HERE");
+            // dbg!(&SCHEDULER);
+            if let Some(Task::Ready(mut _current)) = current {
+                let mut idle = self.idle.lock().unwrap().unwrap();
+                unsafe {
+                    self.swap_context(&mut _current.context, &mut idle);
+                }
+            }
         }
     }
     /// Destroy at end of task. Not to be called directly.
@@ -122,16 +168,14 @@ impl Scheduler {
         println!("Terminating task");
     }
 
-    unsafe fn leaker(func: impl Fn()) {
+    unsafe fn set_context(&self, func: impl Fn()) -> libc::ucontext_t {
         fn mkctx(func: *const u8) {
             let ptr: *const *const dyn Fn() = func as *const _;
             let fatptr: *const dyn Fn() = unsafe { *ptr };
-            dbg!("DEBUG");
             unsafe { (*fatptr)() }
+            SCHEDULER.yield_task();
         }
-        const STACK_SIZE: usize = 4096;
-        libc::malloc(mem::size_of::<usize>());
-        let mut stack = Vec::new();
+        let mut stack = Vec::<u8>::new();
         stack.reserve(STACK_SIZE);
         let mut context: libc::ucontext_t = mem::zeroed();
 
@@ -150,15 +194,6 @@ impl Scheduler {
             1,
             ptr,
         );
-    }
-
-    unsafe fn set_context(&self, func: impl Fn()) -> libc::ucontext_t {
-        let mut context: libc::ucontext_t = std::mem::uninitialized();
-        libc::getcontext(&mut context);
-        // libc::getcontext(&mut context);
-        // libc::makecontext(&mut context, transmute::<_, extern "C" fn()>(func), 0);
-        Self::leaker(func);
-        dbg!("Debug");
         context
     }
 
@@ -176,12 +211,12 @@ pub static SCHEDULER: SchedulerUser = SchedulerUser {
     scheduler: Scheduler {
         queue: Mutex::new(VecDeque::new()),
         algorithm: Fifo {},
-        current: None,
+        current: Mutex::new(None),
+        idle: Mutex::new(None),
     },
 };
-
+unsafe impl Sync for SchedulerUser {}
 unsafe impl Sync for Task {}
-unsafe impl Send for Task {}
 
 fn task1() -> () {
     eprintln!("Starting task 1 execution");
@@ -205,13 +240,19 @@ fn task2() -> () {
     SCHEDULER.yield_task();
 
     eprintln!("Resuming task 2");
-    SCHEDULER.create_task(|| {
-        eprintln!("Executing a sub task");
-    });
-
+    // SCHEDULER.create_task(|| {
+    //     eprintln!("Executing a sub task");
+    // });
     eprintln!("Ending task 2");
+}
+
+fn task3() -> () {
+    eprintln!("Executing task 3");
 }
 
 fn main() {
     SCHEDULER.create_task(task1);
+    // SCHEDULER.create_task(task3);
+    SCHEDULER.join();
+    eprintln!("end of program");
 }
