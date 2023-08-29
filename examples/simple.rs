@@ -26,9 +26,7 @@ trait Algorithm {
 struct Fifo {}
 impl Algorithm for Fifo {
     fn add_to_queue(&self, queue: &Mutex<VecDeque<Task>>, task: Task) {
-        // if let Task::New(job) = task {
         queue.lock().unwrap().push_back(task);
-        // }
     }
     fn get_next_task(&self, queue: &Mutex<VecDeque<Task>>) -> Option<Task> {
         let mut guard = queue.lock().unwrap();
@@ -40,6 +38,7 @@ impl Algorithm for Fifo {
 pub struct SchedulerUser {
     scheduler: Scheduler,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Job {
     parent: Option<libc::ucontext_t>,
@@ -91,44 +90,15 @@ impl Scheduler {
         // When add to queue
         let lock = *self.current.lock().unwrap();
         if let Some(Task::Ready(job)) = lock {
-            unsafe {
-                self.algorithm.add_to_queue(
-                    &self.queue,
-                    Task::Ready(Job {
-                        context: self.set_context(func),
-                        parent: Some(job.context),
-                    }),
-                );
-            }
+            self.algorithm
+                .add_to_queue(&self.queue, Task::Ready(job.set_job_context(func)));
         } else {
             drop(lock);
-            let mut context;
-            unsafe {
-                let mut stack = Vec::<u8>::new();
-                stack.reserve(STACK_SIZE);
-                context = mem::zeroed();
-
-                libc::getcontext(&mut context);
-                context.uc_stack = libc::stack_t {
-                    ss_sp: stack.as_mut_ptr() as *mut libc::c_void,
-                    ss_flags: 0,
-                    ss_size: STACK_SIZE,
-                };
-            }
-            self.idle.lock().unwrap().get_or_insert(context);
-            self.current.lock().unwrap().get_or_insert(Task::Ready(Job {
-                parent: None,
-                context,
-            }));
-            unsafe {
-                self.algorithm.add_to_queue(
-                    &self.queue,
-                    Task::Ready(Job {
-                        context: self.set_context(func),
-                        parent: Some(context),
-                    }),
-                );
-            }
+            let job = Job::create_context();
+            self.idle.lock().unwrap().get_or_insert(job.context);
+            self.current.lock().unwrap().get_or_insert(Task::Ready(job));
+            self.algorithm
+                .add_to_queue(&self.queue, Task::Ready(job.set_job_context(func)));
         }
     }
     /// Run a given task. Not to be called directly by end-user.
@@ -146,20 +116,16 @@ impl Scheduler {
         let next = self.algorithm.get_next_task(&self.queue);
 
         if let Some(Task::Ready(mut _next)) = next {
-            if let Some(Task::Ready(mut _current)) = current {
+            if let Some(Task::Ready(mut _current)) = &current {
                 if !_current.eq(&_next) {
                     self.algorithm.add_to_queue(&self.queue, current.unwrap());
-                    unsafe { self.swap_context(&mut _current.context, &mut _next.context) }
+                    _current.swap_context(&mut _next.context)
                 }
             }
         } else {
-            // dbg!("HERE");
-            // dbg!(&SCHEDULER);
-            if let Some(Task::Ready(mut _current)) = current {
+            if let Some(Task::Ready(mut _current)) = &current {
                 let mut idle = self.idle.lock().unwrap().unwrap();
-                unsafe {
-                    self.swap_context(&mut _current.context, &mut idle);
-                }
+                _current.swap_context(&mut idle);
             }
         }
     }
@@ -168,7 +134,47 @@ impl Scheduler {
         println!("Terminating task");
     }
 
-    unsafe fn set_context(&self, func: impl Fn()) -> libc::ucontext_t {
+    // Task::Blocked
+    fn lock(&self) {}
+    // Task::Ready
+    fn unlock(&self) {}
+}
+
+impl Job {
+    fn set_job_context(&self, func: impl Fn()) -> Self {
+        Job {
+            context: self.set_context(func),
+            parent: Some(self.context),
+        }
+    }
+
+    fn create_context() -> Self {
+        let mut context;
+        unsafe {
+            let mut stack = Vec::<u8>::new();
+            stack.reserve(STACK_SIZE);
+            context = mem::zeroed();
+
+            libc::getcontext(&mut context);
+            context.uc_stack = libc::stack_t {
+                ss_sp: stack.as_mut_ptr() as *mut libc::c_void,
+                ss_flags: 0,
+                ss_size: STACK_SIZE,
+            };
+        };
+        Job {
+            parent: None,
+            context,
+        }
+    }
+
+    fn swap_context(&mut self, dest: &mut libc::ucontext_t) {
+        unsafe {
+            libc::swapcontext(&mut self.context, dest);
+        }
+    }
+
+    fn set_context(&self, func: impl Fn()) -> libc::ucontext_t {
         fn mkctx(func: *const u8) {
             let ptr: *const *const dyn Fn() = func as *const _;
             let fatptr: *const dyn Fn() = unsafe { *ptr };
@@ -177,34 +183,28 @@ impl Scheduler {
         }
         let mut stack = Vec::<u8>::new();
         stack.reserve(STACK_SIZE);
-        let mut context: libc::ucontext_t = mem::zeroed();
+        unsafe {
+            let mut context: libc::ucontext_t = mem::zeroed();
 
-        libc::getcontext(&mut context);
-        context.uc_stack = libc::stack_t {
-            ss_sp: stack.as_mut_ptr() as *mut libc::c_void,
-            ss_flags: 0,
-            ss_size: STACK_SIZE,
-        };
-        let fatptr: *const dyn Fn() = Box::leak(Box::new(func)) as *const _;
-        let ptr: *const *const dyn Fn() = Box::leak(Box::new(fatptr)) as *const _;
-        // Self::mkctx(ptr as *const _);
-        libc::makecontext(
-            &mut context,
-            transmute::<fn(*const u8), extern "C" fn()>(mkctx),
-            1,
-            ptr,
-        );
-        context
+            libc::getcontext(&mut context);
+            context.uc_stack = libc::stack_t {
+                ss_sp: stack.as_mut_ptr() as *mut libc::c_void,
+                ss_flags: 0,
+                ss_size: STACK_SIZE,
+            };
+            let fatptr: *const dyn Fn() = Box::leak(Box::new(func)) as *const _;
+            let ptr: *const *const dyn Fn() = Box::leak(Box::new(fatptr)) as *const _;
+            // Self::mkctx(ptr as *const _);
+            libc::makecontext(
+                &mut context,
+                transmute::<fn(*const u8), extern "C" fn()>(mkctx),
+                1,
+                ptr,
+            );
+
+            context
+        }
     }
-
-    unsafe fn swap_context(&self, src: &mut libc::ucontext_t, dest: &mut libc::ucontext_t) {
-        libc::swapcontext(src, dest);
-    }
-
-    // Task::Blocked
-    fn lock(&self) {}
-    // Task::Ready
-    fn unlock(&self) {}
 }
 
 pub static SCHEDULER: SchedulerUser = SchedulerUser {
@@ -240,9 +240,9 @@ fn task2() -> () {
     SCHEDULER.yield_task();
 
     eprintln!("Resuming task 2");
-    // SCHEDULER.create_task(|| {
-    //     eprintln!("Executing a sub task");
-    // });
+    SCHEDULER.create_task(|| {
+        eprintln!("Executing a sub task");
+    });
     eprintln!("Ending task 2");
 }
 
