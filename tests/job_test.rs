@@ -1,13 +1,10 @@
 #[cfg(test)]
 mod tests {
-
-    use filasse::job::*;
+    use filasse::job::Job;
 
     #[test]
     fn create() {
-        Fifo {
-            virtual_processor: 2,
-        };
-        assert!(true);
+        let job = Job::create_context();
+        assert!(job.parent == None);
     }
 }
